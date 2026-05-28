@@ -176,7 +176,7 @@ class Database:
                 current_player = dict(player_row)
                 
                 # Get the current highest bidder (leading team) if player is not sold
-                if current_player['status'] != 'SOLD' and current_player['current_bid'] > current_player['base_price']:
+                if current_player['status'] != 'SOLD' and current_player['current_bid'] > 0:
                     cursor.execute('''
                         SELECT t.name as leading_team
                         FROM bids b
@@ -331,7 +331,7 @@ class Database:
         cursor.execute('''
             UPDATE players 
             SET status = 'UPCOMING', 
-                current_bid = base_price,
+                current_bid = 0,
                 auction_round = ?
             WHERE status = 'UNSOLD'
         ''', (current_round,))
@@ -496,7 +496,7 @@ class Database:
         cursor.execute('''
             UPDATE players 
             SET status = 'UNSOLD', 
-                current_bid = base_price,
+                current_bid = 0,
                 sold_to_team = NULL,
                 sold_price = 0
             WHERE id = ?
