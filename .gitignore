@@ -1,5 +1,4 @@
 # Environments
-.env
 .venv
 venv/
 ENV/
@@ -45,3 +44,5 @@ $RECYCLE.BIN/
 
 # Images
 images/
+config.bat
+node_modules

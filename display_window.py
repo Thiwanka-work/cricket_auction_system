@@ -1285,6 +1285,14 @@ class DisplayWindow(QMainWindow):
                 # Switch to summary page and refresh team cards
                 if hasattr(self, 'main_stack') and self.main_stack.currentIndex() != 1:
                     self.main_stack.setCurrentIndex(1)
+                
+                # Ensure the SOLD animation overlay and sold badge are hidden in summary view
+                if hasattr(self, '_animation_overlay') and self._animation_overlay:
+                    self._animation_overlay.hide()
+                if hasattr(self, 'sold_badge') and self.sold_badge:
+                    self.sold_badge.hide()
+                self._confetti_active = False
+
                 if hasattr(self, '_summary_view'):
                     teams_data = db.get_team_roster_summary()
                     self._summary_view.sum_title.setText(

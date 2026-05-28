@@ -1794,11 +1794,11 @@ class AdminWindow(QMainWindow):
         player = cursor.fetchone()
         
         if player:
-            # Update current player to LIVE
+            # Update current player to LIVE — bid starts at 0 so the first team click bids base price
             cursor.execute('''
                 UPDATE players 
                 SET status = 'LIVE', 
-                    current_bid = base_price 
+                    current_bid = 0 
                 WHERE id = ?
             ''', (player['id'],))
             
