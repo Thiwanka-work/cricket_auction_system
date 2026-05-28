@@ -1849,6 +1849,10 @@ class AdminWindow(QMainWindow):
         team_id = self.team_combo.currentData()
         amount_lkr = self.bid_amount.value()
 
+        if not team_id:
+            self.show_message('warning', "Warning", "Please select a team first before placing a bid!")
+            return
+
         if team_id and amount_lkr > 0:
             if db.place_bid(team_id, amount_lkr):
                 db.last_bid_value = amount_lkr
@@ -1880,11 +1884,15 @@ class AdminWindow(QMainWindow):
 
         If no team is selected or placing is disabled, only increase the spinbox value.
         """
+        team_id = self.team_combo.currentData()
+        if not team_id:
+            self.show_message('warning', "Warning", "Please select a team first before bidding!")
+            return
+
         # Increase the spinbox value first
         self.increase_bid(increment)
 
         # If place button is enabled and a team is selected, place the bid immediately
-        team_id = self.team_combo.currentData()
         if team_id and self.place_bid_btn.isEnabled():
             # Place bid and update UI with full refresh
             self.place_bid(update_ui=True)
@@ -1898,6 +1906,17 @@ class AdminWindow(QMainWindow):
             if self.team_combo.itemData(i) == team_id:
                 self.team_combo.setCurrentIndex(i)
                 break
+                
+        # If current bid is 0, first team click acts as the base price bid
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT current_player_id FROM auction_settings WHERE id = 1")
+        res = cursor.fetchone()
+        if res and res['current_player_id']:
+            cursor.execute("SELECT current_bid, base_price, status FROM players WHERE id = ?", (res['current_player_id'],))
+            p = cursor.fetchone()
+            if p and p['status'] == 'LIVE' and p['current_bid'] == 0:
+                self.bid_amount.setValue(p['base_price'])
+                self.place_bid(update_ui=True)
         
         # Update button highlighting - Compact design with vibrant selection
         for tid, btn in self.team_buttons.items():

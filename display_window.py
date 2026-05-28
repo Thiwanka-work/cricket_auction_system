@@ -1375,6 +1375,7 @@ class DisplayWindow(QMainWindow):
                 if not self.sold_badge.isVisible():
                     self.sold_badge.setVisible(True)
                     self.sold_badge.raise_()
+                    self._position_sold_badge()
 
                 self.team_title.setText("SOLD SUCCESSFULLY TO")
                 self.team_value.setText(p.get("team_name", "-").upper())
@@ -1387,12 +1388,8 @@ class DisplayWindow(QMainWindow):
 
                 team_logo = self._resolve_image_path(p.get("team_logo"))
                 if team_logo:
-                    pix = QPixmap(team_logo)
-                    # Scale to fit logo area while maintaining aspect ratio
-                    pix = pix.scaled(self.team_logo.size(), 
-                                    Qt.AspectRatioMode.KeepAspectRatio,
-                                    Qt.TransformationMode.SmoothTransformation)
-                    self.team_logo.setPixmap(pix)
+                    # Do not scale manually, setScaledContents(True) handles it and avoids 0x0 size issues
+                    self.team_logo.setPixmap(QPixmap(team_logo))
                 else:
                     self.team_logo.setPixmap(QPixmap())
             else:
