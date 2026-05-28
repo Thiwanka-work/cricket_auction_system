@@ -16,6 +16,14 @@ class Database:
         
         # Currency settings - Only LKR
         self.currency = "LKR"
+
+        # ── Runtime shared state (used by both windows) ──────────────────────
+        self.countdown_enabled = True     # Show/hide the timer on the display
+        self.countdown_limit = 60         # Total seconds per player
+        self.countdown_remaining = 60     # Seconds remaining (decremented by admin)
+        self.countdown_running = False    # Is the timer actively counting?
+        self.show_confetti = False        # Trigger confetti celebration overlay
+        self.last_bid_value = 0           # Last confirmed bid value (for flash detection)
     
     def create_tables(self):
         """Create all necessary tables with player types and images"""
@@ -80,6 +88,23 @@ class Database:
                 FOREIGN KEY (current_player_id) REFERENCES players(id)
             )
         ''')
+
+        # Safe schema migrations for older databases
+        migrations = [
+            "ALTER TABLE auction_settings ADD COLUMN auction_name TEXT DEFAULT 'TPL AUCTION 2026'",
+            "ALTER TABLE auction_settings ADD COLUMN org_name TEXT DEFAULT 'UNIVERSITY OF VAVUNIYA'",
+            "ALTER TABLE auction_settings ADD COLUMN bid_increment_1 INTEGER DEFAULT 1000",
+            "ALTER TABLE auction_settings ADD COLUMN bid_increment_2 INTEGER DEFAULT 2000",
+            "ALTER TABLE auction_settings ADD COLUMN bid_increment_3 INTEGER DEFAULT 5000",
+            "ALTER TABLE auction_settings ADD COLUMN projector_view_mode TEXT DEFAULT 'player'",
+            "ALTER TABLE teams ADD COLUMN max_players INTEGER DEFAULT 11"
+        ]
+        
+        for sql in migrations:
+            try:
+                cursor.execute(sql)
+            except sqlite3.OperationalError:
+                pass
         
         self.conn.commit()
     
@@ -184,8 +209,95 @@ class Database:
             'current_player': current_player,
             'teams': teams,
             'currency': self.currency,
-            'remaining_players': remaining_players
+            'remaining_players': remaining_players,
+            'auction_name': settings.get('auction_name', 'TPL AUCTION 2026'),
+            'org_name': settings.get('org_name', 'UNIVERSITY OF VAVUNIYA')
         }
+
+    def get_auction_branding(self):
+        """Return auction settings (branding and bid increments)."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT auction_name, org_name, bid_increment_1, bid_increment_2, bid_increment_3, projector_view_mode FROM auction_settings WHERE id = 1"
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {
+                'auction_name': 'TPL AUCTION 2026',
+                'org_name': 'UNIVERSITY OF VAVUNIYA',
+                'bid_increment_1': 1000,
+                'bid_increment_2': 2000,
+                'bid_increment_3': 5000,
+                'projector_view_mode': 'player'
+            }
+        return {
+            'auction_name': row['auction_name'] or 'TPL AUCTION 2026',
+            'org_name': row['org_name'] or 'UNIVERSITY OF VAVUNIYA',
+            'bid_increment_1': row['bid_increment_1'] if row['bid_increment_1'] is not None else 1000,
+            'bid_increment_2': row['bid_increment_2'] if row['bid_increment_2'] is not None else 2000,
+            'bid_increment_3': row['bid_increment_3'] if row['bid_increment_3'] is not None else 5000,
+            'projector_view_mode': row['projector_view_mode'] or 'player'
+        }
+
+    def set_auction_branding(self, auction_name, org_name, inc1=1000, inc2=2000, inc3=5000):
+        """Persist auction settings for admin/display windows."""
+        safe_auction = (auction_name or '').strip() or 'TPL AUCTION 2026'
+        safe_org = (org_name or '').strip() or 'UNIVERSITY OF VAVUNIYA'
+        cursor = self.conn.cursor()
+        cursor.execute(
+            '''
+            UPDATE auction_settings
+            SET auction_name = ?, org_name = ?, bid_increment_1 = ?, bid_increment_2 = ?, bid_increment_3 = ?
+            WHERE id = 1
+            ''',
+            (safe_auction, safe_org, inc1, inc2, inc3)
+        )
+        self.conn.commit()
+        
+    def set_projector_view_mode(self, mode):
+        """Set the projector view mode ('player' or 'summary')."""
+        if mode not in ['player', 'summary']:
+            mode = 'player'
+        cursor = self.conn.cursor()
+        cursor.execute("UPDATE auction_settings SET projector_view_mode = ? WHERE id = 1", (mode,))
+        self.conn.commit()
+
+    def get_team_roster_summary(self):
+        """Return per-team roster progress and sold players."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            '''
+            SELECT
+                t.id,
+                t.name,
+                t.logo_path,
+                t.budget,
+                t.spent,
+                COALESCE(t.max_players, 11) AS max_players,
+                COUNT(p.id) AS sold_count
+            FROM teams t
+            LEFT JOIN players p ON p.sold_to_team = t.id AND p.status = 'SOLD'
+            GROUP BY t.id
+            ORDER BY t.name
+            '''
+        )
+
+        teams = []
+        for row in cursor.fetchall():
+            team = dict(row)
+            team['remaining_slots'] = max(0, team['max_players'] - team['sold_count'])
+            cursor.execute(
+                '''
+                SELECT name, player_role, sold_price
+                FROM players
+                WHERE sold_to_team = ? AND status = 'SOLD'
+                ORDER BY sold_price DESC, name
+                ''',
+                (team['id'],)
+            )
+            team['sold_players'] = [dict(p) for p in cursor.fetchall()]
+            teams.append(team)
+        return teams
     
     def get_unsold_players(self):
         """Get all unsold players for re-auction"""
@@ -356,9 +468,31 @@ class Database:
         self.conn.commit()
     
     def mark_player_unsold(self, player_id):
-        """Mark a player as unsold"""
-        cursor = self.conn.cursor()
+        """Mark a player as unsold.
         
+        If the player was previously SOLD, the team's spent budget is
+        corrected by subtracting the previously paid sold_price.
+        """
+        cursor = self.conn.cursor()
+
+        # Check current state – if SOLD we must refund the team's budget
+        cursor.execute(
+            "SELECT status, sold_to_team, sold_price FROM players WHERE id = ?",
+            (player_id,)
+        )
+        row = cursor.fetchone()
+        if row and row['status'] == 'SOLD' and row['sold_to_team'] and row['sold_price']:
+            # Deduct the previously paid price from the team's spent column
+            cursor.execute(
+                "UPDATE teams SET spent = MAX(0, spent - ?) WHERE id = ?",
+                (row['sold_price'], row['sold_to_team'])
+            )
+            # Clear the winning-bid flag so bid history stays clean
+            cursor.execute(
+                "UPDATE bids SET is_winning_bid = 0 WHERE player_id = ?",
+                (player_id,)
+            )
+
         cursor.execute('''
             UPDATE players 
             SET status = 'UNSOLD', 
@@ -367,8 +501,11 @@ class Database:
                 sold_price = 0
             WHERE id = ?
         ''', (player_id,))
-        
+
         self.conn.commit()
+
+        # Clear the celebration flag on the shared state
+        self.show_confetti = False
     
     def get_bid_history(self):
         """Get only winning bids (sold prices) for history"""

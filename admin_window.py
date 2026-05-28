@@ -4,6 +4,8 @@ Admin control window with image upload support
 import sys
 import os
 import shutil
+import threading
+import platform
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
@@ -21,6 +23,12 @@ class AdminWindow(QMainWindow):
         self.leading_team = None
         self.pass_count = 0
         self.team_buttons = {}
+
+        # ── Countdown state ──────────────────────────────────────────────────
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.setInterval(1000)
+        self._countdown_timer.timeout.connect(self._on_countdown_tick)
+
         self.setup_ui()
         self.setup_window_position()
         self.load_data()
@@ -56,8 +64,8 @@ class AdminWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         
         # Create tab widget
-        tabs = QTabWidget()
-        tabs.setStyleSheet("""
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("""
             QTabBar::tab {
                 height: 35px;
                 font-size: 13px;
@@ -65,14 +73,16 @@ class AdminWindow(QMainWindow):
                 padding: 5px 15px;
             }
         """)
-        main_layout.addWidget(tabs)
+        main_layout.addWidget(self.tabs)
         
         # Add tabs
-        tabs.addTab(self.create_auction_tab(), "🎯 AUCTION")
-        tabs.addTab(self.create_players_tab(), "👤 PLAYERS")
-        tabs.addTab(self.create_teams_tab(), "🏆 TEAMS")
-        tabs.addTab(self.create_bids_tab(), "💰 BIDS HISTORY")
-        tabs.addTab(self.create_summary_tab(), "📊 SUMMARY")
+        self.tabs.addTab(self.create_auction_tab(), "🎯 AUCTION")
+        self.tabs.addTab(self.create_players_tab(), "👤 PLAYERS")
+        self.tabs.addTab(self.create_teams_tab(), "🏆 TEAMS")
+        self.tabs.addTab(self.create_bids_tab(), "💰 BIDS HISTORY")
+        self.tabs.addTab(self.create_summary_tab(), "📊 SUMMARY")
+        self.tabs.addTab(self.create_team_rosters_tab(), "👥 TEAM ROSTERS")
+        self.tabs.addTab(self.create_settings_tab(), "⚙️ SETTINGS")
         
         # Status bar with buttons
         self.status_bar = QStatusBar()
@@ -114,6 +124,7 @@ class AdminWindow(QMainWindow):
         self.status_bar.addPermanentWidget(close_btn)
         
         self.status_bar.showMessage("Ready")
+        self._apply_button_polish()
     
     def setup_window_position(self):
         """Position admin window on primary screen"""
@@ -130,130 +141,59 @@ class AdminWindow(QMainWindow):
             print(f"Window positioning error: {e}")
     
     def create_auction_tab(self):
-        """Create auction control tab - Compact Design"""
+        """Create auction control tab - Optimised Split Control Dashboard"""
         tab = QWidget()
         main_layout = QVBoxLayout(tab)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.setSpacing(4)
         
-        # Create scrollable container
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-        
-        # === DISPLAY VIEWS Section ===
-        history_group = QGroupBox("DISPLAY VIEWS")
-        history_layout = QHBoxLayout(history_group)
-        history_layout.setSpacing(6)
-        history_layout.setContentsMargins(10, 8, 10, 8)
-        
-        admin_view_btn = QPushButton("👤 ADMIN VIEW")
-        admin_view_btn.clicked.connect(lambda: self.show_message('info', "Admin View", "Admin window is active"))
-        admin_view_btn.setMinimumHeight(32)
-        admin_view_btn.setProperty("class", "info")
-        
-        self.preview_display_btn = QPushButton("👁 PUBLIC VIEW")
-        self.preview_display_btn.clicked.connect(self.open_display_preview)
-        self.preview_display_btn.setMinimumHeight(32)
-        self.preview_display_btn.setProperty("class", "info")
-        
-        server_status_btn = QPushButton("🌐 SERVER STATUS")
-        server_status_btn.clicked.connect(lambda: self.show_message('info', "Server Status", "Server is running"))
-        server_status_btn.setMinimumHeight(32)
-        server_status_btn.setProperty("class", "success")
-        
-        history_layout.addWidget(admin_view_btn)
-        history_layout.addWidget(self.preview_display_btn)
-        history_layout.addWidget(server_status_btn)
-        
-        # === AUCTION CONTROLS ===
-        control_group = QGroupBox("AUCTION CONTROLS")
-        control_layout = QHBoxLayout(control_group)
-        control_layout.setSpacing(6)
-        control_layout.setContentsMargins(10, 8, 10, 8)
-        
-        self.start_btn = QPushButton("▶ START AUCTION")
-        self.start_btn.clicked.connect(self.start_auction)
-        self.start_btn.setProperty("class", "success")
-        self.start_btn.setMinimumHeight(32)
-        
-        self.stop_btn = QPushButton("⏹ STOP")
-        self.stop_btn.clicked.connect(self.stop_auction)
-        self.stop_btn.setProperty("class", "danger")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.setMinimumHeight(32)
-        
-        self.rerun_unsold_btn = QPushButton("🔄 RE-RUN")
-        self.rerun_unsold_btn.clicked.connect(self.rerun_unsold_players)
-        self.rerun_unsold_btn.setProperty("class", "info")
-        self.rerun_unsold_btn.setMinimumHeight(32)
-        
-        self.end_auction_btn = QPushButton("🏁 END")
-        self.end_auction_btn.clicked.connect(self.end_auction)
-        self.end_auction_btn.setProperty("class", "danger")
-        self.end_auction_btn.setMinimumHeight(32)
-        
-        self.reset_auction_btn = QPushButton("↻ RESET")
-        self.reset_auction_btn.clicked.connect(self.reset_auction_data)
-        self.reset_auction_btn.setProperty("class", "danger")
-        self.reset_auction_btn.setMinimumHeight(32)
-        
-        # Projector button (hidden from main row, add to second row if needed)
-        self.projector_display_btn = QPushButton("📺")
-        self.projector_display_btn.clicked.connect(self.open_display_projector)
-        self.projector_display_btn.setProperty("class", "info")
-        self.projector_display_btn.setFixedSize(32, 32)
-        self.projector_display_btn.setToolTip("Show Projector")
-        
-        control_layout.addWidget(self.start_btn)
-        control_layout.addWidget(self.stop_btn)
-        control_layout.addWidget(self.rerun_unsold_btn)
-        control_layout.addWidget(self.end_auction_btn)
-        control_layout.addWidget(self.reset_auction_btn)
-        control_layout.addWidget(self.projector_display_btn)
-        
-        # === PLAYER INFO - Central Display ===
-        player_group = QGroupBox("CURRENT PLAYER")
-        player_layout = QVBoxLayout(player_group)
-        player_layout.setSpacing(8)
-        player_layout.setContentsMargins(10, 8, 10, 8)
-        
-        # Player name and role
-        self.current_player_label = QLabel("No player selected")
-        self.current_player_label.setStyleSheet("""
-            font-size: 24px; 
-            font-weight: 700; 
-            color: #10b981;
+        # ── MAIN SPLIT DASHBOARD AREA (Important Controls Firstly at the top) ──
+        dashboard_layout = QHBoxLayout()
+        dashboard_layout.setSpacing(8)
+
+        # Left Column: CURRENT PLAYER card (very prominent)
+        player_group = QGroupBox("CURRENT ACTIVE PLAYER")
+        player_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: 800;
+                color: #10b981;
+                border: 2px solid #10b981;
+                border-radius: 8px;
+                margin-top: 2px;
+                background-color: #1a202c;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 10px;
+            }
         """)
+        player_layout = QVBoxLayout(player_group)
+        player_layout.setContentsMargins(12, 12, 12, 12)
+        player_layout.setSpacing(8)
+        
+        self.current_player_label = QLabel("No player selected")
+        self.current_player_label.setStyleSheet("font-size: 28px; font-weight: 800; color: #10b981;")
         self.current_player_label.setAlignment(Qt.AlignCenter)
         
         self.player_role_label = QLabel("All-Rounder | Sri Lanka")
-        self.player_role_label.setStyleSheet("font-size: 14px; color: #9ca3af;")
+        self.player_role_label.setStyleSheet("font-size: 15px; color: #e5e7eb; font-weight: 600;")
         self.player_role_label.setAlignment(Qt.AlignCenter)
         
-        # Price info - Horizontal layout
         price_layout = QHBoxLayout()
-        price_layout.setSpacing(20)
+        price_layout.setSpacing(15)
         
         base_price_container = QWidget()
         base_price_layout = QVBoxLayout(base_price_container)
         base_price_layout.setSpacing(2)
         base_price_layout.setContentsMargins(0, 0, 0, 0)
-        
         base_label = QLabel("BASE PRICE")
-        base_label.setStyleSheet("font-size: 11px; color: #6b7280; font-weight: 600;")
+        base_label.setStyleSheet("font-size: 12px; color: #9ca3af; font-weight: bold;")
         base_label.setAlignment(Qt.AlignCenter)
-        
-        self.base_price_label = QLabel("Rs. 5,000")
-        self.base_price_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #e5e7eb;")
+        self.base_price_label = QLabel("Rs. 0")
+        self.base_price_label.setStyleSheet("font-size: 22px; font-weight: 800; color: #ffffff;")
         self.base_price_label.setAlignment(Qt.AlignCenter)
-        
         base_price_layout.addWidget(base_label)
         base_price_layout.addWidget(self.base_price_label)
         
@@ -261,100 +201,133 @@ class AdminWindow(QMainWindow):
         current_bid_layout = QVBoxLayout(current_bid_container)
         current_bid_layout.setSpacing(2)
         current_bid_layout.setContentsMargins(0, 0, 0, 0)
-        
         bid_label = QLabel("CURRENT BID")
-        bid_label.setStyleSheet("font-size: 11px; color: #6b7280; font-weight: 600;")
+        bid_label.setStyleSheet("font-size: 12px; color: #f59e0b; font-weight: bold;")
         bid_label.setAlignment(Qt.AlignCenter)
-        
-        self.current_bid_label = QLabel("Rs. 5,000")
-        self.current_bid_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #f59e0b;")
+        self.current_bid_label = QLabel("Rs. 0")
+        self.current_bid_label.setStyleSheet("font-size: 32px; font-weight: 900; color: #00ffae;")
         self.current_bid_label.setAlignment(Qt.AlignCenter)
-        
         current_bid_layout.addWidget(bid_label)
         current_bid_layout.addWidget(self.current_bid_label)
         
-        price_layout.addStretch()
-        price_layout.addWidget(base_price_container)
-        price_layout.addWidget(current_bid_container)
-        price_layout.addStretch()
+        price_layout.addWidget(base_price_container, 1)
+        price_layout.addWidget(current_bid_container, 1)
         
-        # Action buttons - Horizontal
+        # Action controls for player
         action_layout = QHBoxLayout()
         action_layout.setSpacing(6)
-        
-        self.prev_player_btn = QPushButton("⏮")
+        self.prev_player_btn = QPushButton("⏮ PREV")
         self.prev_player_btn.clicked.connect(self.select_previous_player)
         self.prev_player_btn.setProperty("class", "info")
         self.prev_player_btn.setEnabled(False)
-        self.prev_player_btn.setFixedSize(40, 32)
-        self.prev_player_btn.setToolTip("Previous Player")
-        
-        self.next_player_btn = QPushButton("⏭ NEXT")
+        self.prev_player_btn.setMinimumHeight(38)
+        self.next_player_btn = QPushButton("⏭ NEXT PLAYER")
         self.next_player_btn.clicked.connect(self.select_next_player)
         self.next_player_btn.setProperty("class", "warning")
         self.next_player_btn.setEnabled(False)
-        self.next_player_btn.setMinimumHeight(32)
+        self.next_player_btn.setMinimumHeight(38)
+        self.next_player_btn.setFont(QFont("Arial", 11, QFont.Bold))
         
+        action_layout.addWidget(self.prev_player_btn, 1)
+        action_layout.addWidget(self.next_player_btn, 2)
+        
+        sold_action_layout = QHBoxLayout()
+        sold_action_layout.setSpacing(6)
         self.sold_btn = QPushButton("✅ SOLD")
         self.sold_btn.clicked.connect(self.mark_as_sold)
         self.sold_btn.setProperty("class", "success")
         self.sold_btn.setEnabled(False)
-        self.sold_btn.setMinimumHeight(32)
-        
+        self.sold_btn.setMinimumHeight(44)
+        self.sold_btn.setFont(QFont("Arial", 12, QFont.Bold))
         self.unsold_btn = QPushButton("❌ UNSOLD")
         self.unsold_btn.clicked.connect(self.mark_as_unsold)
         self.unsold_btn.setProperty("class", "danger")
         self.unsold_btn.setEnabled(False)
-        self.unsold_btn.setMinimumHeight(32)
+        self.unsold_btn.setMinimumHeight(44)
+        self.unsold_btn.setFont(QFont("Arial", 12, QFont.Bold))
         
-        action_layout.addWidget(self.prev_player_btn)
-        action_layout.addWidget(self.next_player_btn)
-        action_layout.addWidget(self.sold_btn)
-        action_layout.addWidget(self.unsold_btn)
+        sold_action_layout.addWidget(self.sold_btn)
+        sold_action_layout.addWidget(self.unsold_btn)
         
-        # Status and Round info
         status_layout = QHBoxLayout()
         self.status_label = QLabel("Status: UPCOMING")
-        self.status_label.setStyleSheet("font-size: 13px; font-weight: 600;")
+        self.status_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #9ca3af;")
         self.round_label = QLabel("Round: 1")
-        self.round_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #3b82f6;")
+        self.round_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #3b82f6;")
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         status_layout.addWidget(self.round_label)
         
         player_layout.addWidget(self.current_player_label)
         player_layout.addWidget(self.player_role_label)
-        player_layout.addSpacing(8)
+        player_layout.addSpacing(6)
         player_layout.addLayout(price_layout)
-        player_layout.addSpacing(8)
+        player_layout.addSpacing(6)
         player_layout.addLayout(action_layout)
+        player_layout.addLayout(sold_action_layout)
         player_layout.addLayout(status_layout)
         
-        # === FAST TEAM SELECTION ===
+        dashboard_layout.addWidget(player_group, 40) # 40% Width
+
+        # Right Column: Fast Team Selection + Bid Management
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+
+        # 1. FAST TEAM SELECTION (High visibility buttons)
         team_group = QGroupBox("FAST TEAM SELECTION")
+        team_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 13px;
+                font-weight: bold;
+                color: #3b82f6;
+                border: 1px solid #374151;
+                border-radius: 6px;
+                margin-top: 2px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 8px;
+            }
+        """)
         team_layout = QHBoxLayout(team_group)
         team_layout.setSpacing(6)
-        team_layout.setContentsMargins(10, 8, 10, 8)
+        team_layout.setContentsMargins(8, 10, 8, 6)
         self.team_buttons_container = team_layout
         
-        # === BID MANAGEMENT ===
-        bid_group = QGroupBox("BID MANAGEMENT (LKR)")
+        right_layout.addWidget(team_group)
+
+        # 2. BID MANAGEMENT (LKR)
+        bid_group = QGroupBox("BID MANAGEMENT & INCREMENTS")
+        bid_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 13px;
+                font-weight: bold;
+                color: #f59e0b;
+                border: 1px solid #374151;
+                border-radius: 6px;
+                margin-top: 2px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 8px;
+            }
+        """)
         bid_layout = QVBoxLayout(bid_group)
         bid_layout.setSpacing(6)
-        bid_layout.setContentsMargins(10, 8, 10, 8)
+        bid_layout.setContentsMargins(10, 10, 10, 8)
         
-        # Team combo (hidden)
         self.team_combo = QComboBox()
         self.team_combo.setEnabled(False)
-        self.team_combo.setMinimumHeight(32)
-        self.team_combo.hide()
+        self.team_combo.hide() # Keep hidden as fast team selection is used
         
-        # Custom amount input
         amount_layout = QHBoxLayout()
-        amount_layout.setSpacing(6)
-        
-        amount_label = QLabel("ENTER CUSTOM AMOUNT")
-        amount_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #9ca3af;")
+        amount_layout.setSpacing(8)
+        amount_label = QLabel("CUSTOM AMOUNT:")
+        amount_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #9ca3af;")
         
         self.bid_amount = QDoubleSpinBox()
         self.bid_amount.setRange(0, 10000000)
@@ -363,117 +336,302 @@ class AdminWindow(QMainWindow):
         self.bid_amount.setPrefix("Rs. ")
         self.bid_amount.setSuffix(" LKR")
         self.bid_amount.setEnabled(False)
-        self.bid_amount.setMinimumHeight(32)
+        self.bid_amount.setMinimumHeight(36)
         self.bid_amount.setStyleSheet("""
             QDoubleSpinBox {
-                font-size: 16px;
-                font-weight: 700;
+                font-size: 18px;
+                font-weight: 800;
                 color: #10b981;
                 background-color: #1f2937;
                 border: 2px solid #374151;
                 border-radius: 6px;
-                padding: 6px 10px;
+                padding: 4px 8px;
             }
         """)
-        
         amount_layout.addWidget(amount_label)
         amount_layout.addWidget(self.bid_amount)
         
-        # Quick increments label
-        quick_label = QLabel("QUICK INCREMENTS")
-        quick_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #9ca3af;")
-        
-        # Quick increment buttons row
+        # Increments
         increment_layout = QHBoxLayout()
         increment_layout.setSpacing(6)
+        self.bid_inc1 = 1000
+        self.bid_inc2 = 2000
+        self.bid_inc3 = 5000
         
-        self.increase_1000_btn = QPushButton("+ Rs. 1,000")
-        self.increase_1000_btn.clicked.connect(lambda: self.increase_and_place(1000))
-        self.increase_1000_btn.setEnabled(False)
-        self.increase_1000_btn.setMinimumHeight(32)
-        self.increase_1000_btn.setProperty("class", "info")
+        self.increase_inc1_btn = QPushButton("+ Rs. 1,000")
+        self.increase_inc1_btn.clicked.connect(lambda: self.increase_and_place(self.bid_inc1))
+        self.increase_inc1_btn.setEnabled(False)
+        self.increase_inc1_btn.setMinimumHeight(38)
+        self.increase_inc1_btn.setFont(QFont("Arial", 10, QFont.Bold))
+        self.increase_inc1_btn.setProperty("class", "info")
         
-        self.increase_2000_btn = QPushButton("+ Rs. 2,000")
-        self.increase_2000_btn.clicked.connect(lambda: self.increase_and_place(2000))
-        self.increase_2000_btn.setEnabled(False)
-        self.increase_2000_btn.setMinimumHeight(32)
-        self.increase_2000_btn.setProperty("class", "info")
+        self.increase_inc2_btn = QPushButton("+ Rs. 2,000")
+        self.increase_inc2_btn.clicked.connect(lambda: self.increase_and_place(self.bid_inc2))
+        self.increase_inc2_btn.setEnabled(False)
+        self.increase_inc2_btn.setMinimumHeight(38)
+        self.increase_inc2_btn.setFont(QFont("Arial", 10, QFont.Bold))
+        self.increase_inc2_btn.setProperty("class", "info")
         
-        self.increase_5000_btn = QPushButton("+ Rs. 5,000")
-        self.increase_5000_btn.clicked.connect(lambda: self.increase_and_place(5000))
-        self.increase_5000_btn.setEnabled(False)
-        self.increase_5000_btn.setMinimumHeight(32)
-        self.increase_5000_btn.setProperty("class", "info")
+        self.increase_inc3_btn = QPushButton("+ Rs. 5,000")
+        self.increase_inc3_btn.clicked.connect(lambda: self.increase_and_place(self.bid_inc3))
+        self.increase_inc3_btn.setEnabled(False)
+        self.increase_inc3_btn.setMinimumHeight(38)
+        self.increase_inc3_btn.setFont(QFont("Arial", 10, QFont.Bold))
+        self.increase_inc3_btn.setProperty("class", "info")
         
-        increment_layout.addWidget(self.increase_1000_btn)
-        increment_layout.addWidget(self.increase_2000_btn)
-        increment_layout.addWidget(self.increase_5000_btn)
+        increment_layout.addWidget(self.increase_inc1_btn)
+        increment_layout.addWidget(self.increase_inc2_btn)
+        increment_layout.addWidget(self.increase_inc3_btn)
         
-        # Place bid and pass buttons
+        # Actions
         bid_action_layout = QHBoxLayout()
         bid_action_layout.setSpacing(6)
-        
         self.place_bid_btn = QPushButton("💰 PLACE BID")
         self.place_bid_btn.clicked.connect(self.place_bid)
         self.place_bid_btn.setEnabled(False)
-        self.place_bid_btn.setMinimumHeight(36)
+        self.place_bid_btn.setMinimumHeight(44)
+        self.place_bid_btn.setFont(QFont("Arial", 12, QFont.Bold))
         self.place_bid_btn.setProperty("class", "success")
         
         self.pass_btn = QPushButton("⏸ PASS")
         self.pass_btn.clicked.connect(self.handle_pass)
         self.pass_btn.setEnabled(False)
-        self.pass_btn.setMinimumHeight(36)
+        self.pass_btn.setMinimumHeight(44)
+        self.pass_btn.setFont(QFont("Arial", 12, QFont.Bold))
         self.pass_btn.setProperty("class", "warning")
         
         bid_action_layout.addWidget(self.place_bid_btn, 3)
         bid_action_layout.addWidget(self.pass_btn, 1)
         
-        # Pass counter
         self.pass_counter_label = QLabel("Consecutive Passes: 0")
-        self.pass_counter_label.setStyleSheet("""
-            font-size: 13px; 
-            font-weight: 600; 
-            color: #f59e0b;
-            padding: 6px;
-            background-color: rgba(245, 158, 11, 0.1);
-            border-radius: 4px;
-        """)
+        self.pass_counter_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #f59e0b; padding: 6px; background-color: rgba(245, 158, 11, 0.1); border-radius: 4px;")
         self.pass_counter_label.setAlignment(Qt.AlignCenter)
         
         bid_layout.addLayout(amount_layout)
-        bid_layout.addWidget(quick_label)
         bid_layout.addLayout(increment_layout)
         bid_layout.addLayout(bid_action_layout)
         bid_layout.addWidget(self.pass_counter_label)
         
-        # === FOOTER INFO ===
+        right_layout.addWidget(bid_group)
+        dashboard_layout.addWidget(right_panel, 60) # 60% Width
+
+        main_layout.addLayout(dashboard_layout)
+
+        # ── SYSTEM UTILITIES PANEL (2-row clear grid layout) ──
+        top_panel = QGroupBox("⚙  SYSTEM UTILITIES")
+        top_panel.setStyleSheet("""
+            QGroupBox {
+                font-size: 11px;
+                font-weight: bold;
+                color: #9ca3af;
+                border: 1px solid #374151;
+                border-radius: 6px;
+                margin-top: 4px;
+                padding-top: 6px;
+                background-color: #111827;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0 6px;
+            }
+            QPushButton {
+                border-radius: 4px;
+                font-weight: bold;
+                padding: 3px 8px;
+            }
+        """)
+        util_main = QVBoxLayout(top_panel)
+        util_main.setContentsMargins(8, 6, 8, 6)
+        util_main.setSpacing(4)
+
+        # ── ROW 1: Projector View | Display Window ──────────────────────────
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+
+        # Projector View group
+        proj_lbl = QLabel("🖥  PROJECTOR VIEW:")
+        proj_lbl.setStyleSheet("font-size:10px; font-weight:bold; color:#6b7280;")
+        proj_lbl.setFixedWidth(110)
+        row1.addWidget(proj_lbl)
+
+        self.proj_player_btn = QPushButton("👁  BID VIEW")
+        self.proj_player_btn.clicked.connect(lambda: self.set_projector_mode('player'))
+        self.proj_player_btn.setProperty("class", "info")
+        self.proj_player_btn.setFixedHeight(26)
+        self.proj_player_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.proj_player_btn.setToolTip("Switch projector to live bid view")
+
+        self.proj_summary_btn = QPushButton("📊  SUMMARY VIEW")
+        self.proj_summary_btn.clicked.connect(lambda: self.set_projector_mode('summary'))
+        self.proj_summary_btn.setProperty("class", "warning")
+        self.proj_summary_btn.setFixedHeight(26)
+        self.proj_summary_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.proj_summary_btn.setToolTip("Switch projector to team summary view")
+
+        row1.addWidget(self.proj_player_btn, 1)
+        row1.addWidget(self.proj_summary_btn, 1)
+
+        # Separator
+        sep1 = QFrame(); sep1.setFrameShape(QFrame.VLine)
+        sep1.setStyleSheet("color:#374151;"); sep1.setFixedWidth(1)
+        row1.addWidget(sep1)
+
+        # Display Window group
+        disp_lbl = QLabel("📺  DISPLAY WINDOW:")
+        disp_lbl.setStyleSheet("font-size:10px; font-weight:bold; color:#6b7280;")
+        disp_lbl.setFixedWidth(120)
+        row1.addWidget(disp_lbl)
+
+        self.preview_display_btn = QPushButton("👁  PREVIEW")
+        self.preview_display_btn.clicked.connect(self.open_display_preview)
+        self.preview_display_btn.setFixedHeight(26)
+        self.preview_display_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.preview_display_btn.setProperty("class", "info")
+        self.preview_display_btn.setToolTip("Open display preview on this screen")
+
+        self.projector_display_btn = QPushButton("⛶  PROJECTOR WINDOW")
+        self.projector_display_btn.clicked.connect(self.open_display_projector)
+        self.projector_display_btn.setProperty("class", "info")
+        self.projector_display_btn.setFixedHeight(26)
+        self.projector_display_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.projector_display_btn.setToolTip("Open full-screen projector window")
+
+        row1.addWidget(self.preview_display_btn, 1)
+        row1.addWidget(self.projector_display_btn, 2)
+
+        util_main.addLayout(row1)
+
+        # Thin divider
+        div = QFrame(); div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet("color:#374151;"); div.setFixedHeight(1)
+        util_main.addWidget(div)
+
+        # ── ROW 2: Auction State | Countdown Timer ───────────────────────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+
+        # Auction State group
+        state_lbl = QLabel("🎯  AUCTION STATE:")
+        state_lbl.setStyleSheet("font-size:10px; font-weight:bold; color:#6b7280;")
+        state_lbl.setFixedWidth(110)
+        row2.addWidget(state_lbl)
+
+        self.start_btn = QPushButton("▶  START")
+        self.start_btn.clicked.connect(self.start_auction)
+        self.start_btn.setProperty("class", "success")
+        self.start_btn.setFixedHeight(26)
+        self.start_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.start_btn.setToolTip("Start the auction")
+
+        self.stop_btn = QPushButton("⏹  STOP")
+        self.stop_btn.clicked.connect(self.stop_auction)
+        self.stop_btn.setProperty("class", "danger")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setFixedHeight(26)
+        self.stop_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.stop_btn.setToolTip("Stop the auction")
+
+        self.rerun_unsold_btn = QPushButton("🔄  RERUN UNSOLD")
+        self.rerun_unsold_btn.clicked.connect(self.rerun_unsold_players)
+        self.rerun_unsold_btn.setProperty("class", "info")
+        self.rerun_unsold_btn.setFixedHeight(26)
+        self.rerun_unsold_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.rerun_unsold_btn.setToolTip("Queue unsold players for re-auction")
+
+        self.reset_auction_btn = QPushButton("⚠  RESET")
+        self.reset_auction_btn.clicked.connect(self.reset_auction_data)
+        self.reset_auction_btn.setProperty("class", "danger")
+        self.reset_auction_btn.setFixedHeight(26)
+        self.reset_auction_btn.setFont(QFont("Arial", 9, QFont.Bold))
+        self.reset_auction_btn.setToolTip("Reset all auction data (irreversible!)")
+
+        row2.addWidget(self.start_btn, 1)
+        row2.addWidget(self.stop_btn, 1)
+        row2.addWidget(self.rerun_unsold_btn, 2)
+        row2.addWidget(self.reset_auction_btn, 1)
+
+        # Separator
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.VLine)
+        sep2.setStyleSheet("color:#374151;"); sep2.setFixedWidth(1)
+        row2.addWidget(sep2)
+
+        # Timer group
+        timer_lbl = QLabel("⏱  COUNTDOWN:")
+        timer_lbl.setStyleSheet("font-size:10px; font-weight:bold; color:#6b7280;")
+        timer_lbl.setFixedWidth(90)
+        row2.addWidget(timer_lbl)
+
+        self.countdown_enable_chk = QCheckBox("Enable")
+        self.countdown_enable_chk.setChecked(db.countdown_enabled)
+        self.countdown_enable_chk.setStyleSheet("font-size:10px; color:#d1d5db;")
+        self.countdown_enable_chk.stateChanged.connect(self._on_countdown_toggle)
+
+        self.countdown_spin = QSpinBox()
+        self.countdown_spin.setRange(10, 300)
+        self.countdown_spin.setValue(db.countdown_limit)
+        self.countdown_spin.setSuffix("s")
+        self.countdown_spin.setFixedHeight(26)
+        self.countdown_spin.setFixedWidth(58)
+        self.countdown_spin.setStyleSheet("background:#1f2937; color:#10b981; font-weight:bold; font-size:10px;")
+        self.countdown_spin.valueChanged.connect(self._on_countdown_duration_changed)
+
+        self.countdown_display = QLabel("01:00")
+        self.countdown_display.setStyleSheet(
+            "font-size:13px; font-weight:900; color:#00ffae; background:#111827;"
+            "border:1px solid #374151; border-radius:3px; padding:2px 6px;"
+        )
+        self.countdown_display.setFixedHeight(26)
+
+        self.cd_start_btn = QPushButton("▶")
+        self.cd_start_btn.setFixedSize(26, 26)
+        self.cd_start_btn.setProperty("class", "success")
+        self.cd_start_btn.clicked.connect(self.start_countdown)
+        self.cd_start_btn.setToolTip("Start countdown")
+
+        self.cd_pause_btn = QPushButton("⏸")
+        self.cd_pause_btn.setFixedSize(26, 26)
+        self.cd_pause_btn.setProperty("class", "warning")
+        self.cd_pause_btn.clicked.connect(self.pause_countdown)
+        self.cd_pause_btn.setToolTip("Pause countdown")
+
+        self.cd_reset_btn = QPushButton("↺")
+        self.cd_reset_btn.setFixedSize(26, 26)
+        self.cd_reset_btn.setProperty("class", "danger")
+        self.cd_reset_btn.clicked.connect(self.reset_countdown)
+        self.cd_reset_btn.setToolTip("Reset countdown")
+
+        row2.addWidget(self.countdown_enable_chk)
+        row2.addWidget(self.countdown_spin)
+        row2.addWidget(self.countdown_display)
+        row2.addWidget(self.cd_start_btn)
+        row2.addWidget(self.cd_pause_btn)
+        row2.addWidget(self.cd_reset_btn)
+
+        util_main.addLayout(row2)
+
+        # Unused controls hidden
+        self.end_auction_btn = QPushButton()
+        self.end_auction_btn.hide()
+
+        main_layout.addWidget(top_panel)
+
+        # ── FOOTER INFO ──
         footer_group = QWidget()
         footer_layout = QHBoxLayout(footer_group)
-        footer_layout.setContentsMargins(10, 5, 10, 5)
-        footer_layout.setSpacing(20)
+        footer_layout.setContentsMargins(6, 2, 6, 2)
         
         self.remaining_players_label = QLabel("REMAINING PLAYERS: 0")
-        self.remaining_players_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #9ca3af;")
-        
+        self.remaining_players_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #9ca3af;")
         self.auction_time_label = QLabel("AUCTION TIME: 00:00:00")
-        self.auction_time_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #9ca3af;")
+        self.auction_time_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #9ca3af;")
         
         footer_layout.addWidget(self.remaining_players_label)
         footer_layout.addStretch()
         footer_layout.addWidget(self.auction_time_label)
         
-        # Add all sections to container
-        layout.addWidget(history_group)
-        layout.addWidget(control_group)
-        layout.addWidget(player_group)
-        layout.addWidget(team_group)
-        layout.addWidget(bid_group)
-        layout.addWidget(footer_group)
-        layout.addStretch()
-        
-        # Set up scroll area
-        scroll.setWidget(container)
-        main_layout.addWidget(scroll)
+        main_layout.addWidget(footer_group)
         
         return tab
     
@@ -507,11 +665,11 @@ class AdminWindow(QMainWindow):
         
         # Players table - Updated with player types
         self.players_table = QTableWidget()
-        self.players_table.setColumnCount(11)
+        self.players_table.setColumnCount(12)
         self.players_table.setHorizontalHeaderLabels([
             "ID", "Name", "Base Price (LKR)", "Faculty", "Role", 
             "Batting Style", "Bowling Style", "Status", 
-            "Current Bid (LKR)", "Team", "Sold Price (LKR)"
+            "Current Bid (LKR)", "Team", "Sold Price (LKR)", "Action"
         ])
         self.players_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.players_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -692,9 +850,149 @@ class AdminWindow(QMainWindow):
         layout.addWidget(self.players_by_team_table)
         
         return tab
+
+    def create_team_rosters_tab(self):
+        """Create team roster progress and sold players tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Team Filter:"))
+        self.roster_team_filter = QComboBox()
+        self.roster_team_filter.addItem("All Teams", None)
+        self.roster_team_filter.currentIndexChanged.connect(self.load_team_rosters)
+        controls.addWidget(self.roster_team_filter)
+
+        self.refresh_rosters_btn = QPushButton("🔄 REFRESH")
+        self.refresh_rosters_btn.clicked.connect(self.load_team_rosters)
+        self.refresh_rosters_btn.setProperty("class", "info")
+        self.refresh_rosters_btn.setMinimumHeight(32)
+        controls.addWidget(self.refresh_rosters_btn)
+        controls.addStretch()
+
+        layout.addLayout(controls)
+
+        self.rosters_scroll = QScrollArea()
+        self.rosters_scroll.setWidgetResizable(True)
+        self.rosters_scroll.setFrameShape(QFrame.NoFrame)
+        self.rosters_container = QWidget()
+        self.rosters_layout = QVBoxLayout(self.rosters_container)
+        self.rosters_layout.setContentsMargins(4, 4, 4, 4)
+        self.rosters_layout.setSpacing(10)
+        self.rosters_scroll.setWidget(self.rosters_container)
+        layout.addWidget(self.rosters_scroll)
+        return tab
     
+    def load_team_rosters(self):
+        """Load and display team rosters in the Team Rosters tab"""
+        # Clear existing roster groups
+        while self.rosters_layout.count():
+            item = self.rosters_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        team_filter = self.roster_team_filter.currentData()
+        
+        # Get data from database
+        teams_data = db.get_team_roster_summary()
+        
+        for team in teams_data:
+            if team_filter is not None and team['id'] != team_filter:
+                continue
+                
+            group = QGroupBox(team['name'])
+            group_layout = QVBoxLayout(group)
+            
+            # Header info
+            info_layout = QHBoxLayout()
+            if team['logo_path'] and os.path.exists(team['logo_path']):
+                logo_label = QLabel()
+                pixmap = QPixmap(team['logo_path'])
+                logo_label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                info_layout.addWidget(logo_label)
+            
+            stats_label = QLabel(
+                f"Budget: Rs. {team['budget']:,.0f} | "
+                f"Spent: Rs. {team['spent']:,.0f} | "
+                f"Remaining: Rs. {(team['budget'] - team['spent']):,.0f}"
+            )
+            stats_label.setStyleSheet("font-weight: bold; color: #9ca3af;")
+            info_layout.addWidget(stats_label)
+            info_layout.addStretch()
+            group_layout.addLayout(info_layout)
+            
+            # Progress bar
+            progress_layout = QHBoxLayout()
+            progress_label = QLabel(f"Players: {team['sold_count']} / {team['max_players']}")
+            progress_bar = QProgressBar()
+            progress_bar.setMaximum(team['max_players'])
+            progress_bar.setValue(team['sold_count'])
+            progress_bar.setStyleSheet("""
+                QProgressBar {
+                    border: 1px solid #374151;
+                    border-radius: 4px;
+                    text-align: center;
+                    background-color: #1f2937;
+                }
+                QProgressBar::chunk {
+                    background-color: #10b981;
+                }
+            """)
+            progress_layout.addWidget(progress_label)
+            progress_layout.addWidget(progress_bar)
+            group_layout.addLayout(progress_layout)
+            
+            # Players table
+            if team['sold_players']:
+                table = QTableWidget()
+                table.setColumnCount(3)
+                table.setHorizontalHeaderLabels(["Name", "Role", "Sold Price"])
+                table.setRowCount(len(team['sold_players']))
+                for i, p in enumerate(team['sold_players']):
+                    table.setItem(i, 0, QTableWidgetItem(p['name']))
+                    table.setItem(i, 1, QTableWidgetItem(p['player_role']))
+                    table.setItem(i, 2, QTableWidgetItem(f"Rs. {p['sold_price']:,.0f}"))
+                table.horizontalHeader().setStretchLastSection(True)
+                table.setFixedHeight(120)
+                group_layout.addWidget(table)
+            else:
+                empty_label = QLabel("No players sold to this team yet.")
+                empty_label.setStyleSheet("color: #6b7280; font-style: italic;")
+                group_layout.addWidget(empty_label)
+                
+            self.rosters_layout.addWidget(group)
+            
+        self.rosters_layout.addStretch()
+
+    def save_auction_branding(self):
+        """Save auction branding to database"""
+        auction_name = self.auction_name_edit.text()
+        org_name = self.org_name_edit.text()
+        db.set_auction_branding(auction_name, org_name)
+        self.show_message('info', 'Success', 'Auction branding saved successfully!')
+        self.data_updated.emit()
+        
+    def mark_player_unsold_from_table(self, player_id):
+        """Mark a player as unsold from the players table"""
+        reply = QMessageBox.question(
+            self, 'Confirm', 
+            'Are you sure you want to mark this player as UNSOLD? The team budget will be restored.',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            db.mark_player_unsold(player_id)
+            self.load_data()
+            self.data_updated.emit()
+            self.status_bar.showMessage(f"Player {player_id} marked as UNSOLD")
+            
     def load_data(self):
         """Load data from database"""
+        branding = db.get_auction_branding()
+        if hasattr(self, 'auction_name_edit'):
+            self.auction_name_edit.setText(branding.get('auction_name', 'TPL AUCTION 2026'))
+        if hasattr(self, 'org_name_edit'):
+            self.org_name_edit.setText(branding.get('org_name', 'UNIVERSITY OF VAVUNIYA'))
+
         # Load teams for combo box and team buttons
         cursor = db.conn.cursor()
         cursor.execute("SELECT id, name FROM teams ORDER BY name")
@@ -761,6 +1059,16 @@ class AdminWindow(QMainWindow):
             self.players_table.setItem(i, 8, QTableWidgetItem(f"Rs. {player['current_bid']:,.0f}"))
             self.players_table.setItem(i, 9, QTableWidgetItem(player['team_name'] if player['team_name'] else "-"))
             self.players_table.setItem(i, 10, QTableWidgetItem(f"Rs. {player['sold_price']:,.0f}"))
+            if player['status'] == 'SOLD':
+                unsold_btn = QPushButton("Unsold")
+                unsold_btn.setProperty("class", "danger")
+                unsold_btn.setMinimumHeight(28)
+                unsold_btn.clicked.connect(
+                    lambda checked=False, pid=player['id']: self.mark_player_unsold_from_table(pid)
+                )
+                self.players_table.setCellWidget(i, 11, unsold_btn)
+            else:
+                self.players_table.setItem(i, 11, QTableWidgetItem(""))
         
         # Load teams table
         cursor.execute('''
@@ -781,15 +1089,25 @@ class AdminWindow(QMainWindow):
             remaining = team['budget'] - team['spent']
             self.teams_table.setItem(i, 4, QTableWidgetItem(f"Rs. {remaining:,.0f}"))
             self.teams_table.setItem(i, 5, QTableWidgetItem(str(team['player_count'])))
-        
-        # Load bid history (only winning bids)
-        self.load_bid_history()
-        
-        # Update current player info
-        self.update_current_player_info()
+
+        if hasattr(self, 'roster_team_filter'):
+            selected_team_id = self.roster_team_filter.currentData()
+            self.roster_team_filter.blockSignals(True)
+            self.roster_team_filter.clear()
+            self.roster_team_filter.addItem("All Teams", None)
+            for team in teams:
+                self.roster_team_filter.addItem(team['name'], team['id'])
+            if selected_team_id is not None:
+                idx = self.roster_team_filter.findData(selected_team_id)
+                if idx >= 0:
+                    self.roster_team_filter.setCurrentIndex(idx)
+            self.roster_team_filter.blockSignals(False)
         
         # Load summary
         self.load_summary()
+        self.load_team_rosters()
+        self.load_full_settings()
+        self._apply_button_polish()
     
     def load_bid_history(self):
         """Load only winning bids (sold prices)"""
@@ -856,6 +1174,99 @@ class AdminWindow(QMainWindow):
             self.players_by_team_table.setItem(i, 2, QTableWidgetItem(row['faculty']))
             self.players_by_team_table.setItem(i, 3, QTableWidgetItem(row['role']))
             self.players_by_team_table.setItem(i, 4, QTableWidgetItem(f"Rs. {row['price']:,.0f}"))
+ 
+    def save_auction_branding(self):
+        """Persist auction and organization names and notify display."""
+        name = self.auction_name_edit.text().strip()
+        org = self.org_name_edit.text().strip()
+        db.set_auction_branding(name, org)
+        self.status_bar.showMessage("Auction branding updated")
+        self.data_updated.emit()
+ 
+    def mark_player_unsold_from_table(self, player_id):
+        """Mark SOLD player as UNSOLD from players tab action column with confirmation."""
+        reply = QMessageBox.question(
+            self, "Confirm Unsold",
+            "Are you sure you want to mark this player as UNSOLD? The team budget will be refunded.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            db.mark_player_unsold(player_id)
+            db.show_confetti = False
+            self.load_data()
+            self.data_updated.emit()
+            self.status_bar.showMessage("Player marked as UNSOLD and budget refunded")
+
+    def load_team_rosters(self):
+        """Render roster progress cards and sold player tables."""
+        if not hasattr(self, 'rosters_layout'):
+            return
+
+        while self.rosters_layout.count():
+            item = self.rosters_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        selected_team_id = None
+        if hasattr(self, 'roster_team_filter'):
+            selected_team_id = self.roster_team_filter.currentData()
+
+        teams = db.get_team_roster_summary()
+        for team in teams:
+            if selected_team_id is not None and team['id'] != selected_team_id:
+                continue
+
+            group = QGroupBox(team['name'])
+            group_layout = QVBoxLayout(group)
+            group_layout.setSpacing(8)
+
+            header_row = QHBoxLayout()
+            logo = QLabel()
+            logo.setFixedSize(56, 56)
+            logo.setAlignment(Qt.AlignCenter)
+            logo_path = team.get('logo_path')
+            if logo_path and os.path.exists(logo_path):
+                pixmap = QPixmap(logo_path)
+                if not pixmap.isNull():
+                    logo.setPixmap(pixmap.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+            stats = QLabel(
+                f"Budget: Rs. {team['budget']:,.0f}   |   "
+                f"Spent: Rs. {team['spent']:,.0f}   |   "
+                f"Remaining: Rs. {team['budget'] - team['spent']:,.0f}"
+            )
+            stats.setStyleSheet("font-weight: 600;")
+
+            header_row.addWidget(logo)
+            header_row.addWidget(stats)
+            header_row.addStretch()
+            group_layout.addLayout(header_row)
+
+            progress = QProgressBar()
+            progress.setRange(0, max(1, int(team['max_players'])))
+            progress.setValue(min(int(team['sold_count']), int(team['max_players'])))
+            progress.setFormat(
+                f"{team['sold_count']}/{team['max_players']} players "
+                f"({team['remaining_slots']} slots left)"
+            )
+            group_layout.addWidget(progress)
+
+            sold_table = QTableWidget()
+            sold_table.setColumnCount(3)
+            sold_table.setHorizontalHeaderLabels(["Name", "Role", "Sold Price"])
+            sold_table.setEditTriggers(QTableWidget.NoEditTriggers)
+            sold_table.setSelectionBehavior(QTableWidget.SelectRows)
+            sold_table.horizontalHeader().setStretchLastSection(True)
+            sold_table.setRowCount(len(team['sold_players']))
+            for i, player in enumerate(team['sold_players']):
+                sold_table.setItem(i, 0, QTableWidgetItem(player['name']))
+                sold_table.setItem(i, 1, QTableWidgetItem(player['player_role'] or "-"))
+                sold_table.setItem(i, 2, QTableWidgetItem(f"Rs. {player['sold_price']:,.0f}"))
+            group_layout.addWidget(sold_table)
+            self.rosters_layout.addWidget(group)
+
+        self.rosters_layout.addStretch()
     
     def update_current_player_info(self):
         """Update current player information display"""
@@ -894,15 +1305,16 @@ class AdminWindow(QMainWindow):
                 # Enable/disable buttons based on status
                 is_live = player['status'] == 'LIVE'
                 self.place_bid_btn.setEnabled(is_live)
-                self.increase_1000_btn.setEnabled(is_live)
-                self.increase_2000_btn.setEnabled(is_live)
-                self.increase_5000_btn.setEnabled(is_live)
+                self.increase_inc1_btn.setEnabled(is_live)
+                self.increase_inc2_btn.setEnabled(is_live)
+                self.increase_inc3_btn.setEnabled(is_live)
                 self.pass_btn.setEnabled(is_live)
                 self.bid_amount.setEnabled(is_live)
                 self.team_combo.setEnabled(is_live)
                 
                 self.sold_btn.setEnabled(is_live)
-                self.unsold_btn.setEnabled(is_live)
+                # UNSOLD is valid for both LIVE and SOLD players
+                self.unsold_btn.setEnabled(is_live or player['status'] == 'SOLD')
         else:
             self.current_player_label.setText("No player selected")
             self.player_role_label.setText("All-Rounder | Sri Lanka")
@@ -1333,7 +1745,6 @@ class AdminWindow(QMainWindow):
                 SET status = 'LIVE'
                 WHERE id = ?
             ''', (prev_player['id'],))
-            
             # Update auction settings to point to previous player
             cursor.execute('''
                 UPDATE auction_settings 
@@ -1342,6 +1753,9 @@ class AdminWindow(QMainWindow):
             ''', (prev_player['id'],))
             
             db.conn.commit()
+            
+            # Reset confetti overlay when moving to a new player
+            db.show_confetti = False
             
             self.status_bar.showMessage(f"Previous player selected: {prev_player['id']}")
             self.update_current_player_info()
@@ -1397,6 +1811,9 @@ class AdminWindow(QMainWindow):
             
             db.conn.commit()
             
+            # Reset confetti overlay when moving to a new player
+            db.show_confetti = False
+            
             self.status_bar.showMessage(f"Next player selected: {player['id']}")
             self.update_current_player_info()
             self.load_data()
@@ -1434,8 +1851,10 @@ class AdminWindow(QMainWindow):
 
         if team_id and amount_lkr > 0:
             if db.place_bid(team_id, amount_lkr):
+                db.last_bid_value = amount_lkr
                 # Reset pass counter when new bid is placed
                 self.reset_pass_counter()
+                self._play_bid_sound()
                 self.status_bar.showMessage(f"Bid placed: Rs. {amount_lkr:,.0f}")
                 
                 # Always update current bid label immediately
@@ -1568,10 +1987,12 @@ class AdminWindow(QMainWindow):
             if bid:
                 team_id = bid['team_id']
                 db.mark_player_sold(player_id, team_id, current_bid)
+                db.show_confetti = True
                 
                 # Reset pass counter
                 self.reset_pass_counter()
-                
+                self._stop_countdown_silent()
+                self._play_sold_sound()
                 
                 self.status_bar.showMessage(f"Player sold for Rs. {current_bid:,.0f}")
                 self.update_current_player_info()
@@ -1594,9 +2015,12 @@ class AdminWindow(QMainWindow):
                     reply = self.show_message('question', "Confirm Sell at Base Price", f"No bids found. Sell player for base price Rs. {current_bid:,.0f} to the selected team?", buttons=QMessageBox.Yes | QMessageBox.No)
                     if reply == QMessageBox.Yes:
                         db.mark_player_sold(player_id, team_id, current_bid)
+                        db.show_confetti = True
                         
                         # Reset pass counter
                         self.reset_pass_counter()
+                        self._stop_countdown_silent()
+                        self._play_sold_sound()
                         
                         self.status_bar.showMessage(f"Player sold for Rs. {current_bid:,.0f}")
                         self.update_current_player_info()
@@ -1622,15 +2046,161 @@ class AdminWindow(QMainWindow):
             player_id = result['current_player_id']
             db.mark_player_unsold(player_id)
             
-            # Reset pass counter
+            # Reset confetti if we are undoing a SOLD status
+            db.show_confetti = False
+            
+            # Reset pass counter and stop timer
             self.reset_pass_counter()
+            self._stop_countdown_silent()
             
             self.status_bar.showMessage("Player marked as UNSOLD")
             self.update_current_player_info()
             self.load_data()
             self.data_updated.emit()
     
+    # ─────────────────────────────────────────────────────────────────────────
+    # COUNTDOWN HELPERS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _on_countdown_toggle(self, state):
+        """Enable or disable the countdown timer via the checkbox."""
+        db.countdown_enabled = bool(state)
+        self.data_updated.emit()
+
+    def _on_countdown_duration_changed(self, value):
+        """Update countdown limit when spinbox changes."""
+        db.countdown_limit = value
+        if not db.countdown_running:
+            db.countdown_remaining = value
+            self._update_countdown_display()
+
+    def start_countdown(self):
+        """Start or resume the countdown."""
+        if not db.countdown_enabled:
+            return
+        if db.countdown_remaining <= 0:
+            db.countdown_remaining = db.countdown_limit
+        db.countdown_running = True
+        self._countdown_timer.start()
+        self._update_countdown_display()
+        self.data_updated.emit()
+
+    def pause_countdown(self):
+        """Pause the countdown without resetting."""
+        db.countdown_running = False
+        self._countdown_timer.stop()
+        self.data_updated.emit()
+
+    def reset_countdown(self):
+        """Reset countdown to the configured limit."""
+        db.countdown_running = False
+        self._countdown_timer.stop()
+        db.countdown_remaining = db.countdown_limit
+        self._update_countdown_display()
+        self.data_updated.emit()
+
+    def _stop_countdown_silent(self):
+        """Internal: stop timer without emitting signal (called on sold/unsold)."""
+        db.countdown_running = False
+        self._countdown_timer.stop()
+        db.countdown_remaining = db.countdown_limit
+        self._update_countdown_display()
+
+    def _on_countdown_tick(self):
+        """Called every second by the QTimer."""
+        if db.countdown_remaining > 0:
+            db.countdown_remaining -= 1
+            self._update_countdown_display()
+            # Play warning tick in final 5 seconds
+            if 1 <= db.countdown_remaining <= 5:
+                threading.Thread(target=self._play_tick_sound, daemon=True).start()
+            self.data_updated.emit()
+        else:
+            # Time's up
+            db.countdown_running = False
+            self._countdown_timer.stop()
+            threading.Thread(target=self._play_buzzer_sound, daemon=True).start()
+            self._update_countdown_display()
+            self.data_updated.emit()
+
+    def _update_countdown_display(self):
+        """Refresh the digital MM:SS label in the admin panel."""
+        if not hasattr(self, 'countdown_display'):
+            return
+        remaining = max(0, db.countdown_remaining)
+        mins = remaining // 60
+        secs = remaining % 60
+        text = f"{mins:02d}:{secs:02d}"
+        self.countdown_display.setText(text)
+        # Colour coding
+        if remaining <= 5:
+            color = "#ff4444"
+        elif remaining <= 10:
+            color = "#f59e0b"
+        else:
+            color = "#00ffae"
+        self.countdown_display.setStyleSheet(
+            f"font-size:22px; font-weight:900; color:{color}; background:#111827;"
+            f"border:2px solid #374151; border-radius:8px; padding:4px 12px;"
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # AUDIO HELPERS  (Windows: winsound in background threads)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _play_sold_sound(self):
+        """Fire a gavel-strike sound when a player is SOLD."""
+        threading.Thread(target=self._beep_sold, daemon=True).start()
+
+    def _play_bid_sound(self):
+        """Fire a short beep when a bid is placed."""
+        threading.Thread(target=self._beep_bid, daemon=True).start()
+
+    def _play_tick_sound(self):
+        """Single tick beep for countdown warning."""
+        try:
+            if platform.system() == "Windows":
+                import winsound
+                winsound.Beep(880, 80)
+        except Exception:
+            pass
+
+    def _play_buzzer_sound(self):
+        """Buzzer when countdown hits zero."""
+        try:
+            if platform.system() == "Windows":
+                import winsound
+                for _ in range(3):
+                    winsound.Beep(440, 200)
+                    import time; time.sleep(0.05)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _beep_sold():
+        try:
+            if platform.system() == "Windows":
+                import winsound
+                # Three rising tones  → hammer strike effect
+                winsound.Beep(523, 120)
+                import time; time.sleep(0.04)
+                winsound.Beep(659, 120)
+                import time; time.sleep(0.04)
+                winsound.Beep(784, 250)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _beep_bid():
+        try:
+            if platform.system() == "Windows":
+                import winsound
+                winsound.Beep(1046, 80)
+        except Exception:
+            pass
+
     def add_player(self):
+
         """Add a new player"""
         dialog = PlayerDialog(self)
         if dialog.exec_():
@@ -2028,11 +2598,218 @@ class AdminWindow(QMainWindow):
                     f.write("\n")
             except:
                 pass
-            
-            self.show_message('warning', "Export Failed", 
-                            f"Error exporting PDF:\n{str(e)}\n\n"
-                            f"Error details saved to: {os.path.abspath(error_log)}")
+            self.show_message("error", "Export Failed",
+                              f"Error exporting PDF:\n{str(e)}\n\n"
+                              f"Error details saved to: {os.path.abspath(error_log)}")
 
+    def _apply_button_polish(self):
+        """Apply consistent button heights and fallback tooltips."""
+        for button in self.findChildren(QPushButton):
+            if button.minimumHeight() < 32:
+                button.setMinimumHeight(32)
+            if not button.toolTip():
+                text = button.text().replace("✅", "").replace("❌", "").replace("💰", "").replace("🔄", "").strip()
+                if text:
+                    button.setToolTip(text.title())
+
+    def resizeEvent(self, event):
+        """Dynamically scale fonts and row heights based on window size."""
+        super().resizeEvent(event)
+        if not hasattr(self, 'current_player_label'):
+            return
+
+        h = self.height()
+        w = self.width()
+        
+        # Base dimensions (e.g., 1200x800)
+        scale_factor = min(w / 1200.0, h / 800.0)
+        scale_factor = max(0.7, min(scale_factor, 1.5))
+        
+        heading_size = int(32 * scale_factor)
+        price_size = int(48 * scale_factor)
+        
+        self.current_player_label.setStyleSheet(
+            f"font-size: {heading_size}px; font-weight: 800; color: #10b981;"
+        )
+        self.current_bid_label.setStyleSheet(
+            f"font-size: {price_size}px; font-weight: 900; color: #00ffae;"
+        )
+        
+        if hasattr(self, 'players_table'):
+            self.players_table.verticalHeader().setDefaultSectionSize(int(45 * scale_factor))
+        if hasattr(self, 'bids_table'):
+            self.bids_table.verticalHeader().setDefaultSectionSize(int(35 * scale_factor))
+
+
+
+
+    def set_projector_mode(self, mode):
+        """Set projector mode (player or summary)."""
+        db.set_projector_view_mode(mode)
+        self.data_updated.emit()
+        self.show_message('info', 'Projector Mode', f'Switched projector to {mode.upper()} view.')
+
+    def mark_player_unsold_action(self, player_id):
+        reply = self.show_message('question', "Confirm Unsold", "Are you sure you want to mark this player as UNSOLD? The team budget will be refunded.", QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            db.mark_player_unsold(player_id)
+            self.load_data()
+            self.data_updated.emit()
+
+    def create_team_rosters_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        controls = QHBoxLayout()
+        self.roster_team_combo = QComboBox()
+        self.roster_team_combo.addItem("All Teams", None)
+        self.roster_team_combo.currentIndexChanged.connect(self.load_team_rosters)
+        
+        refresh_btn = QPushButton("🔄 REFRESH ROSTERS")
+        refresh_btn.clicked.connect(self.load_team_rosters)
+        
+        controls.addWidget(QLabel("Filter:"))
+        controls.addWidget(self.roster_team_combo)
+        controls.addStretch()
+        controls.addWidget(refresh_btn)
+        layout.addLayout(controls)
+        
+        self.rosters_scroll = QScrollArea()
+        self.rosters_scroll.setWidgetResizable(True)
+        self.rosters_container = QWidget()
+        self.rosters_layout = QVBoxLayout(self.rosters_container)
+        self.rosters_scroll.setWidget(self.rosters_container)
+        
+        layout.addWidget(self.rosters_scroll)
+        return tab
+
+    def load_team_rosters(self):
+        # Clear layout
+        while self.rosters_layout.count():
+            child = self.rosters_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+                
+        teams_data = db.get_team_roster_summary()
+        
+        # Update combo box if empty
+        if self.roster_team_combo.count() <= 1:
+            self.roster_team_combo.blockSignals(True)
+            self.roster_team_combo.clear()
+            self.roster_team_combo.addItem("All Teams", None)
+            for t in teams_data:
+                self.roster_team_combo.addItem(t['name'], t['id'])
+            self.roster_team_combo.blockSignals(False)
+            
+        selected_team_id = self.roster_team_combo.currentData()
+        
+        for team in teams_data:
+            if selected_team_id and team['id'] != selected_team_id:
+                continue
+                
+            group = QGroupBox()
+            g_layout = QVBoxLayout(group)
+            
+            header = QHBoxLayout()
+            name_label = QLabel(f"{team['name']}")
+            name_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #3b82f6;")
+            
+            budget_label = QLabel(f"Budget: {team['remaining_slots']} slots remaining | Spent: {team['spent']:,.0f} LKR / {team['budget']:,.0f} LKR")
+            
+            progress = QProgressBar()
+            progress.setMaximum(team['max_players'])
+            progress.setValue(team['sold_count'])
+            progress.setFormat(f"{team['sold_count']}/{team['max_players']} Players")
+            progress.setStyleSheet("""
+                QProgressBar { border: 1px solid #374151; border-radius: 5px; text-align: center; }
+                QProgressBar::chunk { background-color: #10b981; }
+            """)
+            
+            header.addWidget(name_label)
+            header.addStretch()
+            header.addWidget(budget_label)
+            header.addWidget(progress)
+            g_layout.addLayout(header)
+            
+            if team['sold_players']:
+                table = QTableWidget()
+                table.setColumnCount(3)
+                table.setHorizontalHeaderLabels(["Player Name", "Role", "Sold Price"])
+                table.setRowCount(len(team['sold_players']))
+                table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+                for i, p in enumerate(team['sold_players']):
+                    table.setItem(i, 0, QTableWidgetItem(p['name']))
+                    table.setItem(i, 1, QTableWidgetItem(p['player_role']))
+                    table.setItem(i, 2, QTableWidgetItem(f"Rs. {p['sold_price']:,.0f}"))
+                table.setMinimumHeight(min(200, 40 + 35 * len(team['sold_players'])))
+                g_layout.addWidget(table)
+            else:
+                g_layout.addWidget(QLabel("No players bought yet."))
+                
+            self.rosters_layout.addWidget(group)
+            
+        self.rosters_layout.addStretch()
+
+    def create_settings_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        settings_group = QGroupBox("AUCTION BRANDING & CONTROLS")
+        s_layout = QFormLayout(settings_group)
+        
+        self.set_auction_name = QLineEdit()
+        self.set_org_name = QLineEdit()
+        self.set_inc1 = QSpinBox()
+        self.set_inc1.setRange(100, 100000)
+        self.set_inc2 = QSpinBox()
+        self.set_inc2.setRange(100, 100000)
+        self.set_inc3 = QSpinBox()
+        self.set_inc3.setRange(100, 100000)
+        
+        s_layout.addRow("Auction Name:", self.set_auction_name)
+        s_layout.addRow("Organization:", self.set_org_name)
+        s_layout.addRow("Bid Increment 1:", self.set_inc1)
+        s_layout.addRow("Bid Increment 2:", self.set_inc2)
+        s_layout.addRow("Bid Increment 3:", self.set_inc3)
+        
+        save_btn = QPushButton("💾 SAVE SETTINGS")
+        save_btn.clicked.connect(self.save_full_settings)
+        save_btn.setProperty("class", "success")
+        
+        layout.addWidget(settings_group)
+        layout.addWidget(save_btn)
+        layout.addStretch()
+        return tab
+
+    def load_full_settings(self):
+        config = db.get_auction_branding()
+        if hasattr(self, 'set_auction_name'):
+            self.set_auction_name.setText(config['auction_name'])
+            self.set_org_name.setText(config['org_name'])
+            self.set_inc1.setValue(config['bid_increment_1'])
+            self.set_inc2.setValue(config['bid_increment_2'])
+            self.set_inc3.setValue(config['bid_increment_3'])
+        
+        self.bid_inc1 = config['bid_increment_1']
+        self.bid_inc2 = config['bid_increment_2']
+        self.bid_inc3 = config['bid_increment_3']
+        
+        if hasattr(self, 'increase_inc1_btn'):
+            self.increase_inc1_btn.setText(f"+ Rs. {self.bid_inc1:,}")
+            self.increase_inc2_btn.setText(f"+ Rs. {self.bid_inc2:,}")
+            self.increase_inc3_btn.setText(f"+ Rs. {self.bid_inc3:,}")
+            
+    def save_full_settings(self):
+        db.set_auction_branding(
+            self.set_auction_name.text(),
+            self.set_org_name.text(),
+            self.set_inc1.value(),
+            self.set_inc2.value(),
+            self.set_inc3.value()
+        )
+        self.load_full_settings()
+        self.show_message("info", "Settings Saved", "Settings updated successfully.")
+        self.data_updated.emit()
 
 class PlayerDialog(QDialog):
     """Dialog for adding/editing players with image upload"""
@@ -2343,6 +3120,20 @@ class TeamDialog(QDialog):
             }
             QDoubleSpinBox QLineEdit { color: #ffffff; }
         """)
+
+        self.max_players_edit = QSpinBox()
+        self.max_players_edit.setRange(1, 25)
+        self.max_players_edit.setValue(11)
+        self.max_players_edit.setStyleSheet("""
+            QSpinBox {
+                color: #ffffff;
+                background-color: #22293b;
+                border: 1px solid #3366ff;
+                padding: 4px;
+                font-weight: bold;
+            }
+            QSpinBox QLineEdit { color: #ffffff; }
+        """)
         
         # Logo upload
         self.logo_path_edit = QLineEdit()
@@ -2370,6 +3161,7 @@ class TeamDialog(QDialog):
         
         form_layout.addRow("Team Name:", self.name_edit)
         form_layout.addRow("Budget (LKR):", self.budget_edit)
+        form_layout.addRow("Max Players:", self.max_players_edit)
         form_layout.addRow("Team Logo:", logo_layout)
         form_layout.addRow("Logo Preview:", self.logo_preview)
         
@@ -2418,6 +3210,7 @@ class TeamDialog(QDialog):
         if team:
             self.name_edit.setText(team['name'])
             self.budget_edit.setValue(team['budget'])
+            self.max_players_edit.setValue(team['max_players'] if 'max_players' in team.keys() else 11)
             
             # Logo
             if team['logo_path']:
@@ -2432,6 +3225,7 @@ class TeamDialog(QDialog):
         """Save team to database with logo handling"""
         name = self.name_edit.text().strip()
         budget_lkr = self.budget_edit.value()
+        max_players = self.max_players_edit.value()
         logo_path = self.logo_path_edit.text().strip()
         
         if not name:
@@ -2474,14 +3268,14 @@ class TeamDialog(QDialog):
         if self.team_id:
             cursor.execute('''
                 UPDATE teams 
-                SET name = ?, budget = ?, logo_path = ?
+                SET name = ?, budget = ?, max_players = ?, logo_path = ?
                 WHERE id = ?
-            ''', (name, budget_lkr, processed_logo_path, self.team_id))
+            ''', (name, budget_lkr, max_players, processed_logo_path, self.team_id))
         else:
             cursor.execute('''
-                INSERT INTO teams (name, budget, logo_path) 
-                VALUES (?, ?, ?)
-            ''', (name, budget_lkr, processed_logo_path))
+                INSERT INTO teams (name, budget, max_players, logo_path) 
+                VALUES (?, ?, ?, ?)
+            ''', (name, budget_lkr, max_players, processed_logo_path))
             
             # Get the new team ID and update logo filename
             team_id = cursor.lastrowid

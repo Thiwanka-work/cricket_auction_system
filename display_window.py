@@ -3,10 +3,14 @@ from typing import cast, Optional
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QFrame,
-    QVBoxLayout, QHBoxLayout, QSizePolicy, QBoxLayout
+    QVBoxLayout, QHBoxLayout, QSizePolicy, QBoxLayout, QScrollArea,
+    QStackedWidget, QProgressBar, QGridLayout
 )
-from PyQt5.QtCore import Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt5.QtGui import QPixmap, QFont, QKeyEvent
+from PyQt5.QtCore import Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QPoint, QVariantAnimation
+from PyQt5.QtGui import QPixmap, QFont, QKeyEvent, QPainter, QPen, QColor, QFontDatabase
+import urllib.request
+import ssl
+import tempfile
 
 from database import db
 
@@ -18,7 +22,7 @@ STYLE = """
         stop:0 #060c1f,
         stop:1 #0f2b63
     );
-    font-family: "Segoe UI";
+    font-family: "Montserrat", "Segoe UI", sans-serif;
 }
 
 QLabel { color: white; }
@@ -126,6 +130,92 @@ class ImageLabel(QLabel):
             self.setPixmap(scaled_pix)
 
 
+class CircularTimer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.value = 60
+        self.maximum = 60
+        self.setMinimumSize(80, 80)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setVisible(False)
+    
+    def setValue(self, val, limit=60):
+        self.value = val
+        self.maximum = limit
+        self.update()
+        
+    def paintEvent(self, event):
+        if self.maximum <= 0: return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        rect = self.rect().adjusted(5, 5, -5, -5)
+        
+        # Background circle
+        p.setPen(QPen(QColor(50, 50, 50, 150), 6))
+        p.drawEllipse(rect)
+        
+        # Arc
+        if self.value <= 10:
+            color = QColor(255, 68, 68)
+        else:
+            color = QColor(0, 255, 174)
+            
+        p.setPen(QPen(color, 6))
+        
+        span_angle = int((self.value / self.maximum) * 360 * 16)
+        p.drawArc(rect, 90 * 16, span_angle)
+        
+        # Text
+        p.setPen(color)
+        font = self.font()
+        font.setPixelSize(int(rect.height() * 0.4))
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(rect, Qt.AlignCenter, str(self.value))
+
+
+class LiveBadge(QLabel):
+    def __init__(self, parent=None):
+        super().__init__("● LIVE", parent)
+        self.setObjectName("live-badge")
+        self.setStyleSheet("""
+            QLabel#live-badge {
+                background-color: #ff003c;
+                color: white;
+                font-weight: 900;
+                padding: 4px 12px;
+                border-radius: 6px;
+                font-size: 16px;
+            }
+        """)
+        self.setVisible(False)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._toggle)
+        self._visible = True
+        
+    def start_blink(self):
+        self.setVisible(True)
+        self._timer.start(800)
+        
+    def stop_blink(self):
+        self._timer.stop()
+        self.setVisible(False)
+        
+    def _toggle(self):
+        self._visible = not self._visible
+        self.setStyleSheet(f"""
+            QLabel#live-badge {{
+                background-color: {'#ff003c' if self._visible else '#880020'};
+                color: {'white' if self._visible else '#dddddd'};
+                font-weight: 900;
+                padding: 4px 12px;
+                border-radius: 6px;
+                font-size: 16px;
+            }}
+        """)
+
+
 class SoldBadge(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,6 +239,243 @@ class SoldBadge(QFrame):
         # Size will be controlled dynamically
 
 
+class TeamSummaryView(QWidget):
+    """Full-screen team progress summary for projector display."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            #summary-root {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #020b18,
+                    stop:0.5 #061a35,
+                    stop:1 #0a0a25
+                );
+            }
+            QLabel { color: white; }
+            .ts-title {
+                font-size: 22px;
+                font-weight: 900;
+                color: #38bdf8;
+                letter-spacing: 1px;
+            }
+            .ts-budget {
+                font-size: 18px;
+                font-weight: 700;
+                color: #10b981;
+            }
+            .ts-spent {
+                font-size: 16px;
+                font-weight: 600;
+                color: #ef4444;
+            }
+            .ts-players {
+                font-size: 16px;
+                font-weight: 700;
+                color: #f59e0b;
+            }
+            QProgressBar {
+                border: 2px solid #1e3a5f;
+                border-radius: 8px;
+                background: #0f2040;
+                text-align: center;
+                color: white;
+                font-weight: 700;
+                font-size: 14px;
+                min-height: 22px;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #10b981, stop:1 #3b82f6
+                );
+                border-radius: 6px;
+            }
+        """)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        root = QWidget()
+        root.setObjectName("summary-root")
+        self.root = root
+        outer.addWidget(root)
+
+        self._main_layout = QVBoxLayout(root)
+        self._main_layout.setContentsMargins(40, 30, 40, 30)
+        self._main_layout.setSpacing(20)
+
+        # ── Header ──────────────────────────────────────────────────────────
+        self.sum_title = QLabel("TEAM SUMMARY")
+        self.sum_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.sum_title.setStyleSheet("""
+            font-size: 48px;
+            font-weight: 900;
+            color: #ffcc33;
+            letter-spacing: 4px;
+        """)
+        self._main_layout.addWidget(self.sum_title)
+
+        # ── Scroll area for team cards ───────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background: transparent; border: none;")
+        self._main_layout.addWidget(scroll, 1)
+
+        self._cards_container = QWidget()
+        self._cards_container.setStyleSheet("background: transparent;")
+        self._grid = QGridLayout(self._cards_container)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(20)
+        self._grid.setVerticalSpacing(20)
+        scroll.setWidget(self._cards_container)
+
+        self._card_widgets = []
+
+    def refresh(self, teams_data):
+        """Rebuild team cards from fresh data."""
+        # Clear old cards
+        for w in self._card_widgets:
+            self._grid.removeWidget(w)
+            w.deleteLater()
+        self._card_widgets.clear()
+
+        cols = 3 if len(teams_data) > 4 else (2 if len(teams_data) > 1 else 1)
+
+        for idx, team in enumerate(teams_data):
+            card = self._build_card(team)
+            row, col = divmod(idx, cols)
+            self._grid.addWidget(card, row, col)
+            self._card_widgets.append(card)
+
+    def _build_card(self, team):
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(14,30,60,0.95),
+                    stop:1 rgba(8,18,42,0.95)
+                );
+                border: 2px solid #1e3a5f;
+                border-radius: 22px;
+            }
+        """)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(12)
+
+        # Top row: logo + name + budget
+        top_row = QHBoxLayout()
+        top_row.setSpacing(16)
+
+        # Logo
+        logo_label = QLabel()
+        logo_label.setFixedSize(100, 100)
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_label.setStyleSheet("""
+            QLabel {
+                background: #0f2040;
+                border: 3px solid #3b82f6;
+                border-radius: 14px;
+            }
+        """)
+        logo_path = team.get('logo_path', '')
+        if logo_path and os.path.exists(logo_path):
+            pix = QPixmap(logo_path)
+            if not pix.isNull():
+                logo_label.setPixmap(pix.scaled(90, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        if logo_label.pixmap() is None or logo_label.pixmap().isNull():
+            logo_label.setText("🏆")
+            logo_label.setStyleSheet(logo_label.styleSheet() + "font-size: 36px;")
+
+        top_row.addWidget(logo_label)
+
+        # Name + budget
+        info_col = QVBoxLayout()
+        info_col.setSpacing(6)
+
+        name_lbl = QLabel(team['name'].upper())
+        name_lbl.setStyleSheet("""
+            font-size: 28px;
+            font-weight: 900;
+            color: #38bdf8;
+            letter-spacing: 1px;
+        """)
+        name_lbl.setWordWrap(True)
+
+        remaining_budget = team['budget'] - team['spent']
+        budget_lbl = QLabel(f"💰 Remaining: Rs. {remaining_budget:,.0f}")
+        budget_lbl.setStyleSheet("font-size: 18px; font-weight: 700; color: #10b981;")
+
+        spent_lbl = QLabel(f"💸 Spent: Rs. {team['spent']:,.0f}")
+        spent_lbl.setStyleSheet("font-size: 16px; font-weight: 600; color: #ef4444;")
+
+        info_col.addWidget(name_lbl)
+        info_col.addWidget(budget_lbl)
+        info_col.addWidget(spent_lbl)
+        info_col.addStretch()
+
+        top_row.addLayout(info_col, 1)
+        layout.addLayout(top_row)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #1e3a5f; border: 1px solid #1e3a5f;")
+        layout.addWidget(sep)
+
+        # Progress bar
+        max_p = team.get('max_players', 11)
+        sold = team.get('sold_count', 0)
+        remaining_slots = max(0, max_p - sold)
+
+        prog_label = QLabel(f"🏏 PLAYERS:  {sold} / {max_p}  |  {remaining_slots} slots left")
+        prog_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #f59e0b;")
+        layout.addWidget(prog_label)
+
+        progress = QProgressBar()
+        progress.setMaximum(max_p)
+        progress.setValue(sold)
+        progress.setFormat(f"{sold}/{max_p} Players")
+        progress.setMinimumHeight(24)
+        layout.addWidget(progress)
+
+        # Sold players list (up to 5)
+        sold_players = team.get('sold_players', [])
+        if sold_players:
+            players_lbl = QLabel("Bought Players:")
+            players_lbl.setStyleSheet("font-size: 13px; color: #9ca3af; font-weight: 600;")
+            layout.addWidget(players_lbl)
+
+            for sp in sold_players[:5]:
+                row_w = QHBoxLayout()
+                p_name = QLabel(f"  ✔ {sp['name']}")
+                p_name.setStyleSheet("font-size: 14px; color: #e2e8f0; font-weight: 600;")
+                p_price = QLabel(f"Rs. {sp['sold_price']:,.0f}")
+                p_price.setStyleSheet("font-size: 14px; color: #10b981; font-weight: 700;")
+                p_price.setAlignment(Qt.AlignmentFlag.AlignRight)
+                row_w.addWidget(p_name)
+                row_w.addStretch()
+                row_w.addWidget(p_price)
+                layout.addLayout(row_w)
+
+            if len(sold_players) > 5:
+                more_lbl = QLabel(f"  + {len(sold_players) - 5} more...")
+                more_lbl.setStyleSheet("font-size: 13px; color: #6b7280; font-style: italic;")
+                layout.addWidget(more_lbl)
+        else:
+            empty_lbl = QLabel("No players bought yet")
+            empty_lbl.setStyleSheet("font-size: 14px; color: #4b5563; font-style: italic;")
+            layout.addWidget(empty_lbl)
+
+        layout.addStretch()
+        return card
+
+
 class DisplayWindow(QMainWindow):
     def __init__(self, mode="preview", screen=None):
         super().__init__()
@@ -161,7 +488,10 @@ class DisplayWindow(QMainWindow):
         self._previous_player_status: Optional[str] = None
         self._animation_overlay: Optional[QLabel] = None
         self._drop_animation: Optional[QPropertyAnimation] = None
+        self._bid_flash_anim: Optional[QVariantAnimation] = None
+        self._last_known_bid = 0
 
+        self._download_and_register_font()
         self.build_ui()
         self.start_timer()
 
@@ -351,7 +681,37 @@ class DisplayWindow(QMainWindow):
         except Exception as e:
             print(f"Preview mode setup error: {e}")
 
+    # ---------- FONTS ----------
+    def _download_and_register_font(self):
+        try:
+            # Bypass SSL verification for font downloads
+            original_context = getattr(ssl, '_create_default_https_context', None)
+            ssl._create_default_https_context = ssl._create_unverified_context
+            
+            font_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+            os.makedirs(font_dir, exist_ok=True)
+            
+            fonts = [
+                ("Montserrat-Regular.ttf", "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Regular.ttf"),
+                ("Montserrat-Bold.ttf", "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf"),
+                ("Montserrat-Black.ttf", "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Black.ttf")
+            ]
+            
+            for fname, url in fonts:
+                fpath = os.path.join(font_dir, fname)
+                if not os.path.exists(fpath):
+                    print(f"Downloading {fname}...")
+                    urllib.request.urlretrieve(url, fpath)
+                QFontDatabase.addApplicationFont(fpath)
+                
+            # Restore original SSL context
+            if original_context:
+                ssl._create_default_https_context = original_context
+        except Exception as e:
+            print(f"Failed to download/register font: {e}")
+
     # ---------- UI BUILD ----------
+
 
     def build_ui(self):
         root = QWidget()
@@ -361,6 +721,18 @@ class DisplayWindow(QMainWindow):
         main = QVBoxLayout(root)
         main.setContentsMargins(20, 15, 20, 15)
         main.setSpacing(15)
+
+        # QStackedWidget: page 0 = player bidding, page 1 = team summary
+        self.main_stack = QStackedWidget()
+
+        # ── PAGE 0: Player Bidding View ────────────────────────────────────
+        self._player_page = QWidget()
+        player_main = QVBoxLayout(self._player_page)
+        player_main.setContentsMargins(0, 0, 0, 0)
+        player_main.setSpacing(15)
+
+        # Alias for convenience – all remaining build code writes to player_main
+        main_alias = player_main
 
         # HEADER
         header = QHBoxLayout()
@@ -379,13 +751,23 @@ class DisplayWindow(QMainWindow):
         header.addLayout(left_h)
         header.addStretch()
 
+        self.team_badges_scroll = QScrollArea()
+        self.team_badges_scroll.setWidgetResizable(True)
+        self.team_badges_scroll.setFrameShape(QFrame.NoFrame)
+        self.team_badges_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.team_badges_scroll.setStyleSheet("background: transparent; border: none;")
+
         self.team_badges_widget = QWidget()
         self.team_badges_layout = QHBoxLayout(self.team_badges_widget)
         self.team_badges_layout.setContentsMargins(0, 0, 0, 0)
         self.team_badges_layout.setSpacing(12)
-        header.addWidget(self.team_badges_widget)
+        self.team_badges_layout.setAlignment(Qt.AlignLeft)
+        
+        self.team_badges_scroll.setWidget(self.team_badges_widget)
+        header.addWidget(self.team_badges_scroll, stretch=1)
 
         # CENTER
+
         center = QHBoxLayout()
         center.setSpacing(20)
         center.setContentsMargins(0, 0, 0, 0)
@@ -415,14 +797,22 @@ class DisplayWindow(QMainWindow):
         self.faculty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.faculty.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.faculty.setWordWrap(True)
+        
+        self.live_badge = LiveBadge()
 
         # Add widgets directly without complex stretches
+        top_pc = QHBoxLayout()
+        top_pc.addStretch()
+        top_pc.addWidget(self.live_badge)
+        pc.addLayout(top_pc)
+        
         pc.addWidget(self.player_image, alignment=Qt.AlignmentFlag.AlignCenter)
         pc.addWidget(self.player_name)
         pc.addWidget(self.faculty)
         pc.addStretch(0)
 
         self._animation_overlay = QLabel(self)
+
         self._animation_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._animation_overlay.setScaledContents(False)
         self._animation_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -494,12 +884,18 @@ class DisplayWindow(QMainWindow):
         bc.setSpacing(10)
 
         # Title label - LEFT ALIGNED at top
+        bid_header = QHBoxLayout()
         bt = QLabel("CURRENT HIGHEST BID")
         bt.setObjectName("header-subtitle")
-        bt.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        bt.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         bt.setWordWrap(True)
         bt.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        bc.addWidget(bt)
+        
+        self.circular_timer = CircularTimer()
+        
+        bid_header.addWidget(bt)
+        bid_header.addWidget(self.circular_timer)
+        bc.addLayout(bid_header)
 
         # Bid value - CENTERED in the remaining space
         self.bid = QLabel("Rs. 0")
@@ -542,10 +938,21 @@ class DisplayWindow(QMainWindow):
         footer.addWidget(self.footer)
         footer.addStretch()
 
-        # Assemble main layout
-        main.addLayout(header, 1)      # Header takes 10% of space
-        main.addLayout(center, 8)      # Center takes 80% of space
-        main.addLayout(footer, 1)      # Footer takes 10% of space
+        # Assemble player_page layout
+        player_main.addLayout(header, 1)
+        player_main.addLayout(center, 8)
+        player_main.addLayout(footer, 1)
+
+        # ── PAGE 1: Team Summary View ───────────────────────────────────────
+        self._summary_view = TeamSummaryView()
+
+        # Wire pages into stacked widget
+        self.main_stack.addWidget(self._player_page)   # index 0
+        self.main_stack.addWidget(self._summary_view)  # index 1
+        self.main_stack.setCurrentIndex(0)
+
+        # Assemble root main layout
+        main.addWidget(self.main_stack)
 
         self._ui_ready = True
 
@@ -645,6 +1052,72 @@ class DisplayWindow(QMainWindow):
 
     def _on_animation_finished(self):
         pass  # Badge stays visible after animation
+
+    def _trigger_bid_flash(self):
+        """Flashes the bid card cyan when a new bid is placed."""
+        if not hasattr(self, 'bid_card'): return
+        
+        if self._bid_flash_anim and self._bid_flash_anim.state() == QPropertyAnimation.State.Running:
+            self._bid_flash_anim.stop()
+            
+        self._bid_flash_anim = QVariantAnimation(self)
+        self._bid_flash_anim.setDuration(500)
+        self._bid_flash_anim.setStartValue(QColor(0, 255, 174, 150))
+        self._bid_flash_anim.setEndValue(QColor(255, 255, 255, 18)) # original rgba(255,255,255,0.07) is roughly 18 alpha
+        self._bid_flash_anim.valueChanged.connect(self._on_bid_flash_update)
+        self._bid_flash_anim.start()
+        
+    def _on_bid_flash_update(self, color):
+        self.bid_card.setStyleSheet(f"""
+            QFrame.card {{
+                background-color: rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha() / 255.0:.2f});
+                border-radius: 24px;
+            }}
+        """)
+
+    def _trigger_confetti(self):
+        """Overlay confetti celebration on the whole screen."""
+        if not self._animation_overlay: return
+        
+        self._animation_overlay.setGeometry(self.rect())
+        
+        # Create a simple confetti-like generated pixmap or a celebratory text overlay
+        pix = QPixmap(self.size())
+        pix.fill(Qt.transparent)
+        
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        # Dark overlay
+        p.fillRect(pix.rect(), QColor(0, 0, 0, 160))
+        
+        # Get team logo if available
+        data = db.get_current_auction_data()
+        p_data = data.get("current_player", {})
+        team_logo_path = self._resolve_image_path(p_data.get("team_logo"))
+        
+        rect = pix.rect()
+        center_y = rect.height() // 2
+        
+        if team_logo_path:
+            logo_pix = QPixmap(team_logo_path)
+            if not logo_pix.isNull():
+                l_size = min(rect.width(), rect.height()) // 3
+                logo_pix = logo_pix.scaled(l_size, l_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                p.drawPixmap((rect.width() - logo_pix.width()) // 2, center_y - logo_pix.height() // 2 - 50, logo_pix)
+                
+        p.setPen(QColor("#ffcc00"))
+        font = self.font()
+        font.setPixelSize(80)
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(rect.adjusted(0, 50, 0, 50), Qt.AlignCenter, f"SOLD TO {p_data.get('team_name', 'TEAM').upper()}!")
+        
+        p.end()
+        
+        self._animation_overlay.setPixmap(pix)
+        self._animation_overlay.show()
+        self._animation_overlay.raise_()
 
     def _position_sold_badge(self):
         if not hasattr(self, "sold_badge") or not hasattr(self, "player_image"):
@@ -803,6 +1276,30 @@ class DisplayWindow(QMainWindow):
     def update_display(self):
         try:
             data = db.get_current_auction_data()
+
+            # ── Check projector view mode ────────────────────────────────────
+            settings = data.get('settings', {})
+            view_mode = settings.get('projector_view_mode', 'player')
+
+            if view_mode == 'summary':
+                # Switch to summary page and refresh team cards
+                if hasattr(self, 'main_stack') and self.main_stack.currentIndex() != 1:
+                    self.main_stack.setCurrentIndex(1)
+                if hasattr(self, '_summary_view'):
+                    teams_data = db.get_team_roster_summary()
+                    self._summary_view.sum_title.setText(
+                        f"{data.get('auction_name', 'TPL AUCTION 2026')} – TEAM SUMMARY"
+                    )
+                    self._summary_view.refresh(teams_data)
+                return
+            else:
+                # Switch back to player bidding page
+                if hasattr(self, 'main_stack') and self.main_stack.currentIndex() != 0:
+                    self.main_stack.setCurrentIndex(0)
+
+            # ── Normal player bidding update ─────────────────────────────────
+            self.header_title.setText(str(data.get("auction_name", "TPL AUCTION 2026")).upper())
+            self.header_subtitle.setText(str(data.get("org_name", "UNIVERSITY OF VAVUNIYA")).upper())
             p = data.get("current_player")
             leading_team_name = None
 
@@ -853,6 +1350,25 @@ class DisplayWindow(QMainWindow):
             # Display bid value without currency prefix
             bid_value = int(p.get('current_bid', 0))
             self.bid.setText(f"{bid_value:,}")
+            
+            # Bid Flash
+            if bid_value > self._last_known_bid and self._last_known_bid != 0 and current_status == "LIVE":
+                self._trigger_bid_flash()
+            self._last_known_bid = bid_value
+            
+            # Circular Timer
+            if db.countdown_enabled and current_status == "LIVE":
+                self.circular_timer.setVisible(True)
+                self.circular_timer.setValue(db.countdown_remaining, db.countdown_limit)
+            else:
+                self.circular_timer.setVisible(False)
+                
+            # Live Badge
+            if current_status == "LIVE":
+                if not self.live_badge.isVisible():
+                    self.live_badge.start_blink()
+            else:
+                self.live_badge.stop_blink()
 
             if p.get("status") == "SOLD":
                 # Badge visibility and position handled by animation
@@ -914,6 +1430,14 @@ class DisplayWindow(QMainWindow):
 
             if current_status == "SOLD" and self._previous_player_status != status_key:
                 QTimer.singleShot(100, self.trigger_sold_animation)
+                
+            if getattr(db, 'show_confetti', False) and not getattr(self, "_confetti_active", False):
+                self._confetti_active = True
+                QTimer.singleShot(100, self._trigger_confetti)
+            elif not getattr(db, 'show_confetti', False):
+                self._confetti_active = False
+                if self._animation_overlay and self._animation_overlay.isVisible():
+                    self._animation_overlay.hide()
 
             self._previous_player_status = status_key
 

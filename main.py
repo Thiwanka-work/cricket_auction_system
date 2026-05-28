@@ -64,20 +64,20 @@ class AuctionApp:
         print("Player Display: Image in center, big text details")
         print("Bid History: Shows only sold prices (winning bids)")
         print("\nADMIN CONTROLS:")
-        print("  • ADD PLAYER: Upload image, set player types")
-        print("  • ADD TEAM: Upload logo, set budget")
-        print("  • BID HISTORY: Shows only winning bids")
-        print("  • DISPLAY: Player image in center of screen")
+        print("  * ADD PLAYER: Upload image, set player types")
+        print("  * ADD TEAM: Upload logo, set budget")
+        print("  * BID HISTORY: Shows only winning bids")
+        print("  * DISPLAY: Player image in center of screen")
         print("\nDISPLAY SCREEN:")
-        print("  • Player image large in center")
-        print("  • Leading team shown during bidding")
-        print("  • Team logo shown when player sold")
-        print("  • ESC: Exit full screen, F11: Toggle, F5: Refresh")
+        print("  * Player image large in center")
+        print("  * Leading team shown during bidding")
+        print("  * Team logo shown when player sold")
+        print("  * ESC: Exit full screen, F11: Toggle, F5: Refresh")
         print("\nQUICK START:")
         print("  1. Add players with images and player types")
         print("  2. Add teams with logos")
         print("  3. Start auction")
-        print("  4. Next player → Place bids → Mark sold/unsold")
+        print("  4. Next player -> Place bids -> Mark sold/unsold")
         print("  5. Check bid history for sold prices only")
         print("\n" + "="*70)
         
@@ -88,12 +88,6 @@ def main():
     """Main entry point"""
     print("Starting TPL Auction - University of Vavuniya...")
     print("Setting up image directories...")
-    
-    # Check for database
-    if not os.path.exists("database/auction.db"):
-        print("Database not found. Creating new database...")
-        from create_database import create_database
-        create_database()
     
     app = AuctionApp()
     sys.exit(app.run())

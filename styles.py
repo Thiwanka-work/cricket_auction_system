@@ -15,7 +15,7 @@ QMainWindow {
 QWidget {
     color: #ffffff;
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     background: transparent;
 }
@@ -24,11 +24,11 @@ QPushButton {
     background-color: #4CAF50;
     border: none;
     color: white;
-    padding: 16px 28px;
-    border-radius: 12px;
-    font-size: 16px;
+    padding: 18px 30px;
+    border-radius: 14px;
+    font-size: 17px;
     font-weight: 700;
-    min-height: 48px;
+    min-height: 50px;
     min-width: 140px;
 }
 
@@ -86,12 +86,12 @@ QLabel {
 QLineEdit, QTextEdit {
     background-color: #1f2937;
     border: 2px solid #374151;
-    border-radius: 8px;
-    padding: 12px 16px;
+    border-radius: 10px;
+    padding: 14px 18px;
     color: #f3f4f6;
-    font-size: 15px;
-    font-weight: 500;
-    min-height: 42px;
+    font-size: 17px;
+    font-weight: 600;
+    min-height: 46px;
 }
 
 QLineEdit:focus, QTextEdit:focus {
@@ -128,24 +128,24 @@ QComboBox QAbstractItemView {
     outline: none;
 }
 
-QDoubleSpinBox {
+QDoubleSpinBox, QSpinBox {
     background-color: #1f2937;
     border: 2px solid #374151;
-    border-radius: 8px;
-    padding: 10px 16px;
+    border-radius: 10px;
+    padding: 12px 18px;
     color: #10b981;
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
-    min-height: 42px;
+    min-height: 46px;
 }
 
 QTableWidget {
     background-color: #1f2937;
     border: 2px solid #374151;
     border-radius: 10px;
-    gridline-color: #374151;
+    gridline-color: #4b5563;
     alternate-background-color: #111827;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 500;
 }
 
@@ -496,4 +496,47 @@ QWidget {
     font-size: 30px;
     font-weight: bold;
     color: #ffffff;
-}"""
+}
+
+/* Projector Summary Card */
+.summary-card {
+    background-color: rgba(30, 41, 59, 0.85);
+    border: 4px solid #475569;
+    border-radius: 20px;
+    padding: 20px;
+    margin: 15px;
+}
+
+.summary-card-logo {
+    background-color: #0f172a;
+    border-radius: 15px;
+    border: 3px solid #3366ff;
+    min-height: 120px;
+    min-width: 120px;
+}
+
+.summary-card-title {
+    font-size: 40px !important;
+    font-weight: 900;
+    color: #38bdf8;
+    margin-bottom: 10px;
+}
+
+.summary-card-budget {
+    font-size: 36px !important;
+    font-weight: bold;
+    color: #10b981;
+}
+
+.summary-card-progress {
+    font-size: 30px !important;
+    font-weight: bold;
+    color: #f59e0b;
+}
+
+.summary-card-spent {
+    font-size: 24px !important;
+    font-weight: bold;
+    color: #ef4444;
+}
+"""
